@@ -45,7 +45,7 @@ semver = "3.1.0"
 sqldelight = "2.4.1"
 # WindowsTrayIcon (hit test + balloon notifications) relies on ComposeNativeTray internals (window class "TRAY", icon uID 1000); recheck it when bumping.
 native-tray = "2.1.7"
-tesseract-platform = "5.5.1-1.5.12"
+tesseract-platform = "5.5.3-1.5.14"
 turbine = "1.2.1"
 webp-imageio = "0.11.0"
 yaml = "2.7"
