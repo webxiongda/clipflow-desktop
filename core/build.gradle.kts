@@ -9,12 +9,12 @@ versionProperties.load(
         project.projectDir
             .toPath()
             .parent
-            .resolve("app/src/desktopMain/resources/crosspaste-version.properties")
+            .resolve("app/src/desktopMain/resources/clipflow-version.properties")
             .toFile(),
     ),
 )
 
-group = "com.crosspaste"
+group = "com.clipflow"
 version = versionProperties.getProperty("version")
 
 plugins {

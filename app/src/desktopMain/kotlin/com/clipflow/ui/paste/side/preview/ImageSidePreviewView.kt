@@ -1,0 +1,189 @@
+package com.clipflow.ui.paste.side.preview
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Badge
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
+import coil3.ImageLoader
+import coil3.PlatformContext
+import com.clipflow.app.UserAttentionService
+import com.clipflow.i18n.GlobalCopywriter
+import com.clipflow.image.ImageHandler
+import com.clipflow.image.coil.ImageLoaderQualifiers
+import com.clipflow.paste.item.ImagesPasteItem
+import com.clipflow.paste.item.PasteFileCoordinate
+import com.clipflow.paste.item.externalFolderName
+import com.clipflow.paste.item.getFilePaths
+import com.clipflow.path.UserDataPathProvider
+import com.clipflow.ui.LocalDesktopAppSizeValueState
+import com.clipflow.ui.base.ImageFileFormat
+import com.clipflow.ui.base.ImageFileSize
+import com.clipflow.ui.base.ImageInfoLabel
+import com.clipflow.ui.base.ImageResolution
+import com.clipflow.ui.base.SmartImageDisplayStrategy
+import com.clipflow.ui.paste.PasteDataScope
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.small2X
+import com.clipflow.ui.theme.AppUISize.tiny3X
+import com.clipflow.utils.extension
+import com.clipflow.utils.getFileUtils
+import com.clipflow.utils.ioDispatcher
+import kotlinx.coroutines.withContext
+import org.koin.compose.koinInject
+import java.awt.image.BufferedImage
+
+@Composable
+fun PasteDataScope.ImageSidePreviewView() {
+    val copywriter = koinInject<GlobalCopywriter>()
+    val imageHandler = koinInject<ImageHandler<BufferedImage>>()
+    val platformContext = koinInject<PlatformContext>()
+    val userAttentionService = koinInject<UserAttentionService>()
+    val userDataPathProvider = koinInject<UserDataPathProvider>()
+    val userImageLoader = koinInject<ImageLoader>(qualifier = ImageLoaderQualifiers.USER_IMAGE)
+    val fileUtils = remember { getFileUtils() }
+    val smartImageDisplayStrategy = remember { SmartImageDisplayStrategy() }
+
+    val imagePasteItem = getPasteItem(ImagesPasteItem::class)
+
+    // These three read the file layout (basePath + relativePathList), not the content.
+    // A download conflict rename rewrites relativePathList while deliberately keeping
+    // the same hash, so hash is not a valid freshness key here.
+    val fileLayout = imagePasteItem.basePath to imagePasteItem.relativePathList
+
+    val imageCount = remember(pasteData.id, fileLayout) { imagePasteItem.getDirectChildrenCount() }
+    val externalFolderName =
+        remember(pasteData.id, fileLayout) {
+            imagePasteItem.externalFolderName(userDataPathProvider)
+        }
+
+    var index by remember(pasteData.id) { mutableStateOf(0) }
+
+    val filePaths =
+        remember(pasteData.id, fileLayout) {
+            imagePasteItem.getFilePaths(userDataPathProvider)
+        }
+    if (filePaths.isEmpty()) return
+
+    val safeIndex = index.coerceIn(filePaths.indices)
+    val imagePath = filePaths[safeIndex]
+
+    val pasteFileCoordinate =
+        remember(pasteData.id, imagePath) {
+            PasteFileCoordinate(pasteData.getPasteCoordinate(), imagePath)
+        }
+
+    val density = LocalDensity.current
+    val targetUiSize = LocalDesktopAppSizeValueState.current.sidePasteContentSize
+    val targetSizePx =
+        with(density) {
+            Size(targetUiSize.width.toPx(), targetUiSize.height.toPx())
+        }
+
+    val intSize by produceState<IntSize?>(initialValue = null, key1 = imagePath) {
+        value = withContext(ioDispatcher) { imageHandler.readSize(imagePath) }
+    }
+
+    val fileSize by produceState(initialValue = 0L, key1 = imagePath) {
+        value = withContext(ioDispatcher) { fileUtils.getFileSize(imagePath) }
+    }
+
+    val fileFormat = remember(imagePath) { imagePath.extension }
+
+    SidePasteLayoutView(
+        pasteBottomContent = {},
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (imagePath.isAnimatedImage()) {
+                AnimatedImageSidePreview(
+                    imagePath = imagePath,
+                    targetSizePx = targetSizePx,
+                    smartImageDisplayStrategy = smartImageDisplayStrategy,
+                    userAttentionService = userAttentionService,
+                )
+            } else {
+                StaticImageSidePreview(
+                    imagePath = imagePath,
+                    pasteFileCoordinate = pasteFileCoordinate,
+                    intSize = intSize,
+                    targetSizePx = targetSizePx,
+                    smartImageDisplayStrategy = smartImageDisplayStrategy,
+                    imageLoader = userImageLoader,
+                    platformContext = platformContext,
+                )
+            }
+
+            ImageCountBadge(imageCount)
+
+            ImageInfoLabels(
+                externalFolderName = externalFolderName,
+                fileFormat = fileFormat,
+                intSize = intSize,
+                fileSize = fileSize,
+                copywriter = copywriter,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BoxScope.ImageCountBadge(imageCount: Long) {
+    if (imageCount <= 1L) return
+    val label = remember(imageCount) { if (imageCount > 99) "99+" else imageCount.toString() }
+    Badge(
+        modifier =
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = medium, end = medium),
+    ) {
+        Text(label)
+    }
+}
+
+@Composable
+private fun BoxScope.ImageInfoLabels(
+    externalFolderName: String?,
+    fileFormat: String,
+    intSize: IntSize?,
+    fileSize: Long,
+    copywriter: GlobalCopywriter,
+) {
+    Column(
+        modifier =
+            Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = small2X),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(tiny3X),
+    ) {
+        externalFolderName?.let { folderName ->
+            ImageInfoLabel(text = copywriter.getText("in_folder", folderName))
+        }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(tiny3X, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(tiny3X),
+        ) {
+            ImageFileFormat(format = fileFormat)
+            ImageResolution(imageSize = intSize)
+            ImageFileSize(fileSize = fileSize)
+        }
+    }
+}

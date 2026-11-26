@@ -16,11 +16,11 @@ versionProperties.load(
     FileReader(
         project.projectDir
             .toPath()
-            .resolve("src/desktopMain/resources/crosspaste-version.properties")
+            .resolve("src/desktopMain/resources/clipflow-version.properties")
             .toFile(),
     ),
 )
-group = "com.crosspaste"
+group = "com.clipflow"
 version = versionProperties.getProperty("version")
 
 plugins {
@@ -351,7 +351,7 @@ private fun initJvmArgs(
         jvmArgs(
             arrayOf(
                 "-Dapple.awt.enableTemplateImages=true",
-                "-Dmac.bundleID=com.crosspaste.mac",
+                "-Dmac.bundleID=com.clipflow.mac",
             ),
         )
     }
@@ -377,7 +377,7 @@ compose.desktop {
             configurationFiles.from("compose-desktop.pro")
         }
 
-        mainClass = "com.crosspaste.CrossPaste"
+        mainClass = "com.clipflow.ClipFlow"
 
         if (os.isMacOsX || buildFullPlatform) {
             if (!buildFullPlatform) {
@@ -496,7 +496,7 @@ compose.desktop {
         nativeDistributions {
 
             appResourcesRootDir = project.layout.projectDirectory.dir("resources")
-            packageName = "crosspaste"
+            packageName = "clipflow"
             packageVersion = version.toString()
 
             // If we want to use arthas attach application in production environment,
@@ -545,10 +545,10 @@ compose.desktop {
                 targetFormats(TargetFormat.Dmg)
 
                 macOS {
-                    bundleID = "com.crosspaste.mac"
+                    bundleID = "com.clipflow.mac"
                     appCategory = "public.app-category.utilities"
                     infoPlist {
-                        dockName = "CrossPaste"
+                        dockName = "ClipFlow"
                         extraKeysRawXml = """
                         <key>LSUIElement</key>
                         <string>true</string>
@@ -635,7 +635,7 @@ tasks.withType<Test> {
     useJUnitPlatform {
         // Fast tier by default: suites tagged @IntegrationTest (real processes,
         // full handshakes, wall-clock timing) only run with -PintegrationTests,
-        // which release/beta CI builds pass. See com.crosspaste.test.IntegrationTest.
+        // which release/beta CI builds pass. See com.clipflow.test.IntegrationTest.
         if (!providers.gradleProperty("integrationTests").isPresent) {
             excludeTags("integration")
         }
@@ -790,18 +790,18 @@ tasks.register("prepareOpenSslLibs") {
 // Development-run parity with packaged builds: development runs (`app:run`,
 // `desktopRun`, every hot-reload entry point) stage the current platform's
 // pinned libcrypto first — JBR-style automatic download — and point the run
-// JVM at it through the crosspaste.libcrypto.path override, so pairing v3
+// JVM at it through the clipflow.libcrypto.path override, so pairing v3
 // works in development without a system OpenSSL. Only DEVELOPMENT runs are
 // wired: packaged builds and tests are unaffected, and `-PappEnv=PRODUCTION`
 // or BETA runs resolve the bundled library, which ignores overrides. An
-// explicit override — `-Dcrosspaste.libcrypto.path=...` on the Gradle
-// invocation, or CROSSPASTE_LIBCRYPTO_PATH in the environment — wins over the
+// explicit override — `-Dclipflow.libcrypto.path=...` on the Gradle
+// invocation, or CLIPFLOW_LIBCRYPTO_PATH in the environment — wins over the
 // staged library and skips the download entirely, so an offline machine with
 // its own libcrypto still starts.
 val devRunAppEnv: String = project.findProperty("appEnv")?.toString() ?: "DEVELOPMENT"
-val devLibcryptoPropertyOverride: String? = System.getProperty("crosspaste.libcrypto.path")
+val devLibcryptoPropertyOverride: String? = System.getProperty("clipflow.libcrypto.path")
 val devLibcryptoOverridden: Boolean =
-    devLibcryptoPropertyOverride != null || System.getenv("CROSSPASTE_LIBCRYPTO_PATH") != null
+    devLibcryptoPropertyOverride != null || System.getenv("CLIPFLOW_LIBCRYPTO_PATH") != null
 
 // Lazy so openssl.yaml is only parsed when a development run task is actually
 // configured, never for tests or unrelated builds; null on platforms
@@ -861,19 +861,19 @@ fun JavaExec.wireDevLibcrypto() {
         // An environment variable reaches the child process on its own; a
         // Gradle -D property does not, so forward it (app-side priority stays
         // property > environment > platform candidates).
-        devLibcryptoPropertyOverride?.let { systemProperty("crosspaste.libcrypto.path", it) }
+        devLibcryptoPropertyOverride?.let { systemProperty("clipflow.libcrypto.path", it) }
         return
     }
     val libFile = devOpenSslLibFile
     if (libFile == null) {
         logger.warn(
             "openssl.yaml defines no libcrypto binary for this platform; pairing v3 needs " +
-                "a system OpenSSL 3 or a crosspaste.libcrypto.path override to load.",
+                "a system OpenSSL 3 or a clipflow.libcrypto.path override to load.",
         )
         return
     }
     dependsOn(prepareDevOpenSslLib)
-    systemProperty("crosspaste.libcrypto.path", libFile.absolutePath)
+    systemProperty("clipflow.libcrypto.path", libFile.absolutePath)
 }
 
 tasks.withType<JavaExec>().configureEach {

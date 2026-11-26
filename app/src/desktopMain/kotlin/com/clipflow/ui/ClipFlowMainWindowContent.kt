@@ -1,0 +1,105 @@
+package com.clipflow.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import com.clipflow.ui.devices.NetworkWarningDialogHost
+import com.clipflow.ui.theme.AppUIColors
+import com.clipflow.ui.theme.AppUISize.tiny5X
+import org.koin.compose.koinInject
+
+@Composable
+fun ClipFlowMainWindowContent() {
+    val screenProvider = koinInject<DesktopScreenProvider>()
+
+    val appSizeValue = LocalDesktopAppSizeValueState.current
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Box(
+            modifier =
+                Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxSize(),
+            ) {
+                Row(
+                    modifier =
+                        Modifier
+                            .width(appSizeValue.mainMenuSize.width)
+                            .fillMaxHeight()
+                            .background(AppUIColors.sidebarBackground),
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.TopCenter,
+                    ) {
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(appSizeValue.windowDecorationHeight)
+                                    .offset(y = -appSizeValue.windowDecorationHeight)
+                                    .background(AppUIColors.sidebarBackground),
+                        ) {}
+
+                        MainMenuView()
+                    }
+                }
+                Box(
+                    modifier =
+                        Modifier
+                            .width(tiny5X)
+                            .fillMaxHeight(),
+                ) {
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(appSizeValue.windowDecorationHeight)
+                                .offset(y = -appSizeValue.windowDecorationHeight)
+                                .background(MaterialTheme.colorScheme.outlineVariant),
+                    ) {}
+                    VerticalDivider(
+                        thickness = tiny5X,
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+                Box(
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .background(AppUIColors.contentBackground),
+                ) {
+                    WindowDecoration()
+                    screenProvider.screen()
+                }
+            }
+        }
+
+        NotificationHost()
+
+        screenProvider.TokenView()
+
+        NetworkWarningDialogHost()
+
+        UpdateDialogHost()
+    }
+}

@@ -1,0 +1,87 @@
+package com.clipflow.paste
+
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.paste.item.PasteItem
+import io.github.oshai.kotlinlogging.KLogger
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+
+interface PasteboardService : PasteboardMonitor {
+
+    val logger: KLogger
+
+    var owner: Boolean
+
+    val pasteReleaseService: PasteReleaseService
+
+    val configManager: CommonConfigManager
+
+    val remotePasteboardChannel: Channel<suspend () -> Result<Unit?>>
+
+    val serviceScope: CoroutineScope
+
+    fun startRemotePasteboardListener() {
+        serviceScope.launch {
+            for (task in remotePasteboardChannel) {
+                try {
+                    if (configManager.getCurrentConfig().enablePasteboardListening) {
+                        task()
+                    }
+                } catch (e: Exception) {
+                    logger.error(e) { "Run write remote pasteboard" }
+                }
+            }
+        }
+    }
+
+    suspend fun tryWritePasteboard(
+        id: Long? = null,
+        pasteItem: PasteItem,
+        localOnly: Boolean = false,
+        updateCreateTime: Boolean = false,
+    ): Result<Unit?>
+
+    suspend fun tryWritePasteboard(
+        pasteData: PasteData,
+        localOnly: Boolean = false,
+        scope: PasteWriteScope = configManager.getCurrentConfig().pasteWriteScope(),
+        updateCreateTime: Boolean = false,
+    ): Result<Unit?>
+
+    suspend fun tryWriteRemotePasteboard(pasteData: PasteData): Result<Unit?>
+
+    /**
+     * [seenAppInstanceIds]: the sender's relay-seen set, see [com.clipflow.sync.RelaySeen].
+     * Defaults to dropping the set so implementations predating it still compile.
+     */
+    suspend fun tryWriteRemotePasteboard(
+        pasteData: PasteData,
+        seenAppInstanceIds: Set<String>,
+    ): Result<Unit?> = tryWriteRemotePasteboard(pasteData)
+
+    suspend fun tryWriteRemotePasteboardList(
+        pasteDataList: List<PasteData>,
+        writeToPasteboard: Boolean = false,
+    ): Result<Unit?>
+
+    suspend fun tryWriteRemotePasteboardWithFile(pasteId: Long): Result<Unit?>
+
+    suspend fun tryWriteRemotePasteboardWithFile(
+        pasteId: Long,
+        seenAppInstanceIds: Set<String>,
+    ): Result<Unit?> = tryWriteRemotePasteboardWithFile(pasteId, seenAppInstanceIds, writeToPasteboard = true)
+
+    suspend fun tryWriteRemotePasteboardWithFile(
+        pasteId: Long,
+        seenAppInstanceIds: Set<String>,
+        writeToPasteboard: Boolean,
+    ): Result<Unit?> = tryWriteRemotePasteboardWithFile(pasteId, seenAppInstanceIds)
+
+    suspend fun tryWriteRemotePasteboardWithFile(
+        pasteId: Long,
+        seenAppInstanceIds: Set<String>,
+        writeToPasteboard: Boolean,
+        historyPull: Boolean,
+    ): Result<Unit?> = tryWriteRemotePasteboardWithFile(pasteId, seenAppInstanceIds, writeToPasteboard)
+}

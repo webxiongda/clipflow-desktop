@@ -12,19 +12,19 @@ The Microsoft Store and installer packages now declare their firewall rules, so 
 # [2.3.0] - 2026-10-23
 
 ## 🧩 Plugins for the right-click menu
-The right-click menu of your clipboard history can now be extended with plugins: a plugin hands the item to your script and puts the result back on the clipboard or in the history. A built-in **Translate** plugin translates into the language you pick from its submenu. Enable plugins under Extensions → Plugins; to write your own, see https://github.com/CrossPaste/crosspaste-desktop/blob/main/doc/plugins/README.md
+The right-click menu of your clipboard history can now be extended with plugins: a plugin hands the item to your script and puts the result back on the clipboard or in the history. A built-in **Translate** plugin translates into the language you pick from its submenu. Enable plugins under Extensions → Plugins; to write your own, see https://github.com/ClipFlow/clipflow-desktop/blob/main/doc/plugins/README.md
 
 ## 🔄 Catch up after reconnecting
 Items copied on a peer while your device was offline are fetched automatically when it reconnects. You can turn this off under Settings → Sync.
 
 ## 📋 More reliable pasting, snappier search window
-CrossPaste now waits until the previous app is really back in front and the shortcut keys are released before sending the paste keystroke, so content no longer lands in the wrong place; if the app does not come back in time, you are asked to paste manually. Clicking outside the search window closes it right away, the tray icon toggles it, and the bubble editor always stays on top of it.
+ClipFlow now waits until the previous app is really back in front and the shortcut keys are released before sending the paste keystroke, so content no longer lands in the wrong place; if the app does not come back in time, you are asked to paste manually. Clicking outside the search window closes it right away, the tray icon toggles it, and the bubble editor always stays on top of it.
 
 ## 🐧 Linux
 Links and files open through xdg-open; windows are no longer too small with fractional scaling on KDE Plasma; Super-key shortcuts work again under XWayland; and RPM packages with a signed dnf repository are now available.
 
 ## 🪟 Windows installer works again
-The Windows installer (MSIX) packages of 2.2.0 and 2.2.1 failed to install or update with error 0x80080204; this is fixed. The terminal command is now **crosspaste**, and the CLI works again on installer and Microsoft Store installs.
+The Windows installer (MSIX) packages of 2.2.0 and 2.2.1 failed to install or update with error 0x80080204; this is fixed. The terminal command is now **clipflow**, and the CLI works again on installer and Microsoft Store installs.
 
 # [2.2.1] - 2026-10-09
 
@@ -35,7 +35,7 @@ A new floating button lists your clipboard history; click a row and it is pasted
 The Windows portable build now downloads, verifies and extracts a new version in the background as soon as the update check finds one, throttled to 1 MB/s so it does not get in the way of your browsing; you are only prompted once it is ready, and a single click on "Restart and update" finishes the job. Downloads resume where they left off after the app is closed or the connection drops. If you would rather not download automatically, turn it off under Settings → General and you will be prompted to download manually as before. macOS and the Windows installer builds are already updated in the background by the system and are unaffected. An incomplete update package is refused instead of being applied, so it can never break the installed version.
 
 ## 🔒 Keep passwords out of history: manager hints and source exclusion
-Password managers such as Bitwarden, 1Password and KeePassXC mark a copied password as "do not record". CrossPaste now honors that hint on Windows, macOS and Linux: marked content is neither written to history nor synced to other devices. For apps that do not set the hint, the Clipboard sources page under Settings → Clipboard → Recording lets you pick apps to exclude straight from the running apps, or add match rules so that any source whose name contains the given text (for example bitw) is skipped.
+Password managers such as Bitwarden, 1Password and KeePassXC mark a copied password as "do not record". ClipFlow now honors that hint on Windows, macOS and Linux: marked content is neither written to history nor synced to other devices. For apps that do not set the hint, the Clipboard sources page under Settings → Clipboard → Recording lets you pick apps to exclude straight from the running apps, or add match rules so that any source whose name contains the given text (for example bitw) is skipped.
 
 ## 📁 Choose where large files go
 Files above the backup size limit used to land in the system Downloads folder only. You can now pick any folder under Settings → Clipboard → Storage; leaving it empty keeps the Downloads folder. The old "sync to Downloads" switch has been replaced by this path setting, so files above the limit now always go to the destination folder. Two receive-side issues with same-name files were fixed along the way: the renamed record pointed at the wrong file, and a retry could truncate a file you already had.
@@ -44,7 +44,7 @@ Files above the backup size limit used to land in the system Downloads folder on
 The receiving side now acknowledges a paste only after it is durably stored, so a drop mid-transfer no longer loses items; the initiating device advertises its own address during pairing, so devices on networks with one-way mDNS (virtual machines, some routers) sync in both directions after pairing; multi-homed hosts (for example Windows with Internet Connection Sharing or a hotspot) can now be reached by their peers; and stale entries of the same device no longer cause duplicate pushes. With clipboard relay on, text, links, HTML, RTF and colors are now relayed too, not just files, and devices relaying to each other never bounce a paste around in a loop. Items left half-received when the app last quit are cleaned up at startup instead of staying stuck as "loading"; a removed device no longer reappears because of a sync update arriving at the same moment; and devices that fail to connect back off sooner instead of being retried constantly.
 
 ## 🛡️ Safer data, no more creeping disk usage
-Changing the storage location now confirms the new location is fully written before deleting the old data, so a failure midway never loses your history; an app config that cannot be read is no longer overwritten with defaults; deleting an item also removes its file folder instead of leaving leftovers on disk; a failed import or export no longer leaves broken records pointing at missing files, and paths in an import package that point outside the storage folder are rejected; copying the same content twice in quick succession no longer makes the two records delete each other; copying a file out of CrossPaste storage keeps the original record; and a failure early in startup now leaves a log behind for troubleshooting.
+Changing the storage location now confirms the new location is fully written before deleting the old data, so a failure midway never loses your history; an app config that cannot be read is no longer overwritten with defaults; deleting an item also removes its file folder instead of leaving leftovers on disk; a failed import or export no longer leaves broken records pointing at missing files, and paths in an import package that point outside the storage folder are rejected; copying the same content twice in quick succession no longer makes the two records delete each other; copying a file out of ClipFlow storage keeps the original record; and a failure early in startup now leaves a log behind for troubleshooting.
 
 ## 🔍 A more responsive search window
 Punctuation such as brackets, quotes and hyphens in a search no longer makes it come up empty; the selected row stays put when new items arrive; the query resets immediately every time the window opens; and a tag filter is cleared when that tag is deleted. Closing the search window without pasting returns focus to the app you were using; switching to another app while the edit bubble is open now closes the search window together with the bubble; and the floating paste button comes back onto a visible screen after a monitor is unplugged.
@@ -59,19 +59,19 @@ Settings are regrouped: Advanced became Clipboard, organized as Recording → Sy
 On macOS 26, "Open System Settings" now lands directly on the Accessibility pane; a copied link pastes as plain text into non-Java apps; HTML content is extracted from the body only with whitespace trimmed; packaged builds start correctly on the JBR 25 runtime; an MCP server that fails to start now shows the reason in settings; SOCKS proxies apply to resource downloads. After editing text or HTML in the app, pasting into apps that only take plain text gives the edited content, and editing HTML saves its background color too; on Windows, copied HTML with line breaks is no longer cut off or misaligned when pasted elsewhere; on macOS, a clipboard that changes again mid-copy no longer produces an item mixing old and new content; photos with EXIF rotation show their correct size in the side preview; files added through MCP can now be pasted, previewed and synced; in Linux Wayland sessions, images copied in native Wayland apps (such as KDE Spectacle screenshots) are now recorded; and deleting a tag or an item also removes the links between them.
 
 ## ⌨️ CLI
-New crosspaste devices remove / block / unblock subcommands let you remove a paired device and block or unblock a nearby device from the terminal. Headless mode no longer writes the pairing token to the log.
+New clipflow devices remove / block / unblock subcommands let you remove a paired device and block or unblock a nearby device from the terminal. Headless mode no longer writes the pairing token to the log.
 
 # [2.2.0] - 2026-08-31
 
 ## ⌨️ Brand-new command-line tool
-CrossPaste now ships with a command-line tool, crosspaste, bundled in every desktop package (on macOS, the app offers a one-click install on first launch; on Windows, one click adds it to PATH). Copy, paste, search, pick interactively, edit, and watch your clipboard history live — plus pair devices and run headless — all from the terminal and your scripts. In sixel-capable terminals, images even preview inline as real pixels. See the CLI guide for every command and example:
-https://github.com/CrossPaste/crosspaste-desktop/blob/main/doc/en/CLI.md
+ClipFlow now ships with a command-line tool, clipflow, bundled in every desktop package (on macOS, the app offers a one-click install on first launch; on Windows, one click adds it to PATH). Copy, paste, search, pick interactively, edit, and watch your clipboard history live — plus pair devices and run headless — all from the terminal and your scripts. In sixel-capable terminals, images even preview inline as real pixels. See the CLI guide for every command and example:
+https://github.com/ClipFlow/clipflow-desktop/blob/main/doc/en/CLI.md
 
 ## 🔐 Next-generation device pairing
 Pairing two devices now uses a stronger protocol. The accepting device shows a one-time 6-digit PIN that rotates every 30 seconds, and the PIN is verified with a password-authenticated key exchange — so nobody on the network can intercept the pairing or learn anything from a wrong guess, and repeated wrong guesses lock pairing until you reopen the pairing screen. Pairing with devices running an older version automatically uses the previous flow, so nothing breaks while your other devices catch up.
 
 ## 🪟 More reliable clipboard capture on Windows
-Rapid consecutive clipboard changes are now coalesced into a single capture, fixing an issue on Windows 11 where Snipping Tool screenshots taken with PrtScr failed to auto-save while CrossPaste was running. A single copy no longer produces duplicate image records, and sporadic write failures while the database was busy are fixed too.
+Rapid consecutive clipboard changes are now coalesced into a single capture, fixing an issue on Windows 11 where Snipping Tool screenshots taken with PrtScr failed to auto-save while ClipFlow was running. A single copy no longer produces duplicate image records, and sporadic write failures while the database was busy are fixed too.
 
 ## 🖥️ The main window now stays on screen
 Fixed an issue where the main window could be taller than the screen, cutting off the bottom of the UI and putting it out of reach. The window height is now clamped to the usable screen area.
@@ -106,10 +106,10 @@ A new setting lets you customize the maximum size for text, HTML, rich text, and
 Settings now has an Appearance page where you can customize the height of the side search window, with a live preview as you drag the slider. Card title bars in the side window now also scale proportionally with card size for a more consistent look.
 
 ## 🍎 macOS: hide the Dock icon
-A new setting lets you hide CrossPaste from the Dock and keep only the menu bar icon — for those who like a clean Dock.
+A new setting lets you hide ClipFlow from the Dock and keep only the menu bar icon — for those who like a clean Dock.
 
 ## 🔒 URL preview fetching can now be turned off
-A new setting lets you disable fetching a copied link's title and icon. Turn it off if you don't want CrossPaste to make any network request for copied URLs — for privacy, or to avoid accidentally triggering one-time links. It stays on by default, matching the previous behavior.
+A new setting lets you disable fetching a copied link's title and icon. Turn it off if you don't want ClipFlow to make any network request for copied URLs — for privacy, or to avoid accidentally triggering one-time links. It stays on by default, matching the previous behavior.
 
 ## 🧩 Chrome extension improvements
 Fixed an issue where the extension could not receive content pushed from the desktop app when encrypted sync was enabled, and another where the extension could not stay connected to devices that require authenticated connections. The extension also supports a newer, more secure pairing flow with the desktop app: both screens show the same numbers, and you just confirm they match.
@@ -123,16 +123,16 @@ Fixed an issue where running the Chrome extension and the desktop app together c
 Clipboard monitoring on Windows now uses the system's recommended event notification mechanism, so copied content is picked up faster and more reliably. Source detection is fixed too — the "copied from" app shown in your history is now the program that actually wrote to the clipboard, not whichever window happened to be in the foreground.
 
 ## 🪟 Works on newer Windows builds without wmic
-Newer Windows 11 builds have removed the wmic tool, which prevented CrossPaste from generating a device identifier. It now reads from the system registry instead, so CrossPaste works correctly on up-to-date Windows.
+Newer Windows 11 builds have removed the wmic tool, which prevented ClipFlow from generating a device identifier. It now reads from the system registry instead, so ClipFlow works correctly on up-to-date Windows.
 
 ## 🔍 The search window no longer holds a grudge
 Reopening the search window or changing your query now scrolls the list back to the top and selects the newest entry, instead of staying at your previous position or keeping a selection that no longer matches.
 
 ## 📶 Device discovery prefers your LAN
-When your computer has multiple network connections (such as a cellular modem or a phone hotspot), CrossPaste now prefers the local network for discovering nearby devices, making discovery and connection more reliable.
+When your computer has multiple network connections (such as a cellular modem or a phone hotspot), ClipFlow now prefers the local network for discovering nearby devices, making discovery and connection more reliable.
 
 ## 🐧 New Linux ARM64 build
-CrossPaste now ships a Linux ARM64 (aarch64) package, so ARM-based Linux devices are supported too.
+ClipFlow now ships a Linux ARM64 (aarch64) package, so ARM-based Linux devices are supported too.
 
 # [2.1.5] - 2026-06-11
 
@@ -142,13 +142,13 @@ Fixed an error (Cannot call invokeAndWait from the event dispatcher thread) that
 # [2.1.4] - 2026-06-10
 
 ## 🔄 Faster, more reliable reconnection
-This release focuses on the connection between your devices. When you switch Wi-Fi networks, your network address changes, or your computer wakes from sleep, CrossPaste now rediscovers your other devices and reconnects much faster — no more being stuck "offline" for a long time. Even when a device's IP address changes, it reconnects reliably.
+This release focuses on the connection between your devices. When you switch Wi-Fi networks, your network address changes, or your computer wakes from sleep, ClipFlow now rediscovers your other devices and reconnects much faster — no more being stuck "offline" for a long time. Even when a device's IP address changes, it reconnects reliably.
 
 ## 🆕 In-app changelog and upgrade reminder
 You can now see what each update brings right inside the app. When a new version is available, a small dot appears in the left menu to remind you to upgrade.
 
 ## ⬆️ Windows (portable zip): update from within the app
-The Windows portable (zip) build can now update itself. When a new version is available, CrossPaste downloads and verifies it, then swaps in the new build and restarts — no more manually downloading and extracting a fresh zip.
+The Windows portable (zip) build can now update itself. When a new version is available, ClipFlow downloads and verifies it, then swaps in the new build and restarts — no more manually downloading and extracting a fresh zip.
 
 ## 🖱️ Fixed a paste loop
 Fixed an issue where pressing Cmd/Ctrl+V could trigger an endless paste loop in some situations. Pasting is now more reliable.
@@ -160,7 +160,7 @@ The device list no longer flickers while re-checking offline devices, so it stay
 Fixed an issue where copying formatted text from apps such as JetBrains IDEs could produce garbled characters. Clipboard text encoding detection is now much more reliable.
 
 ## 🐧 Better clipboard on Linux
-On Wayland desktops, copied content is now picked up faster. On Hyprland and Sway, CrossPaste also correctly identifies which app your copy came from.
+On Wayland desktops, copied content is now picked up faster. On Hyprland and Sway, ClipFlow also correctly identifies which app your copy came from.
 
 # [2.1.3] - 2026-05-25
 
@@ -168,13 +168,13 @@ On Wayland desktops, copied content is now picked up faster. On Hyprland and Swa
 Sharing files between your devices is now snappier and more reliable. The device you copied from delivers files directly to your other devices, instead of making them ask for the data first.
 
 ## 🅾️ Redesigned OCR language settings
-The text-from-image (OCR) language settings got a cleaner look, with each loaded language on its own card. You can now drag languages up and down to set their priority — handy when CrossPaste needs to pick which language to try first on multilingual images.
+The text-from-image (OCR) language settings got a cleaner look, with each loaded language on its own card. You can now drag languages up and down to set their priority — handy when ClipFlow needs to pick which language to try first on multilingual images.
 
-## 🛡️ Windows: heads-up when your network blocks CrossPaste
-On Windows, if your network is set to "Public", the Windows Firewall silently blocks CrossPaste from finding nearby devices. CrossPaste now detects this and offers a one-click shortcut to the Windows setting where you can switch the network to Private.
+## 🛡️ Windows: heads-up when your network blocks ClipFlow
+On Windows, if your network is set to "Public", the Windows Firewall silently blocks ClipFlow from finding nearby devices. ClipFlow now detects this and offers a one-click shortcut to the Windows setting where you can switch the network to Private.
 
 ## 🖱️ Smoother drag-and-drop
-Dragging items from the CrossPaste side panel into other apps is much better now. On macOS, the drag preview no longer hides behind the paste window — you can finally see what you're dragging. Dragging stays smooth even with lots of items on screen, and you can now drag to reorder your search tags too.
+Dragging items from the ClipFlow side panel into other apps is much better now. On macOS, the drag preview no longer hides behind the paste window — you can finally see what you're dragging. Dragging stays smooth even with lots of items on screen, and you can now drag to reorder your search tags too.
 
 ## 🖼️ Animated GIFs and real video thumbnails in the side preview
 GIFs in your clipboard history now actually animate (smoothly, even for large ones), and video files show a real thumbnail of the first frame instead of a generic icon.
@@ -182,7 +182,7 @@ GIFs in your clipboard history now actually animate (smoothly, even for large on
 # [2.0.0] - 2026-04-26
 
 ## 🌍 Chrome Extension — a first-class platform
-CrossPaste now ships a Chrome extension that joins the sync network as a real platform. It supports image preview, large file download, right-click copy, and steps aside automatically when the desktop app is running on the same machine.
+ClipFlow now ships a Chrome extension that joins the sync network as a real platform. It supports image preview, large file download, right-click copy, and steps aside automatically when the desktop app is running on the same machine.
 
 ## 🔌 New WebSocket sync protocol
 A bidirectional WebSocket sync protocol replaces the previous polling flow, with incremental pulling and an active liveness probe for snappier recovery after a disconnect.

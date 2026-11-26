@@ -1,0 +1,126 @@
+package com.clipflow.sync
+
+import com.clipflow.db.sync.HostInfo
+import com.clipflow.db.sync.SyncRuntimeInfo
+import kotlinx.coroutines.CompletableDeferred
+
+sealed interface SyncEvent {
+
+    interface SyncRunTimeInfoEvent : SyncEvent {
+        val syncRuntimeInfo: SyncRuntimeInfo
+    }
+
+    interface CallbackEvent : SyncEvent {
+        val callback: ResolveCallback
+    }
+
+    data class Resolve(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        override val callback: ResolveCallback,
+    ) : SyncRunTimeInfoEvent,
+        CallbackEvent {
+        override fun toString(): String = "Resolve ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class ForceResolve(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        override val callback: ResolveCallback,
+    ) : SyncRunTimeInfoEvent,
+        CallbackEvent {
+        override fun toString(): String = "ForceResolve ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class TrustByBearerToken(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        val token: QrBearerToken,
+        val callback: (Boolean) -> Unit,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "TrustByBearerToken ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class TrustBySasCode(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        val code: SasCode,
+        val callback: (Boolean) -> Unit,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "TrustBySasCode ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class UpdateAllowSend(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        val allowSend: Boolean,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "UpdateAllowSend ${syncRuntimeInfo.appInstanceId} $allowSend"
+    }
+
+    data class UpdateAllowReceive(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        val allowReceive: Boolean,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "UpdateAllowReceive ${syncRuntimeInfo.appInstanceId} $allowReceive"
+    }
+
+    data class UpdateNoteName(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        val noteName: String,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "UpdateNoteName ${syncRuntimeInfo.appInstanceId} $noteName"
+    }
+
+    data class ExchangeKeysForPairing(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        val generation: Long,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "ExchangeKeysForPairing ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class CancelPairing(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        // Generation of the exchange the abandoned dialog owned, captured from
+        // the PendingExchangeLedger synchronously at the UI call site: a newer
+        // exchange from a reopened dialog replaces the ledger record, so this
+        // stale cancel consumes nothing.
+        val generation: Long,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "CancelPairing ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class ShowToken(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "ShowToken ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class ShowPairingCode(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        val completionSignal: CompletableDeferred<ShowPairingCodeResult> = CompletableDeferred(),
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "ShowPairingCode ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class NotifyExit(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+        val completionSignal: CompletableDeferred<Unit> = CompletableDeferred(),
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "NotifyExit ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class MarkExit(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "MarkExit ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class RemoveDevice(
+        override val syncRuntimeInfo: SyncRuntimeInfo,
+    ) : SyncRunTimeInfoEvent {
+        override fun toString(): String = "RemoveDevice ${syncRuntimeInfo.appInstanceId}"
+    }
+
+    data class RefreshSyncInfo(
+        val appInstanceId: String,
+        val hostInfoList: List<HostInfo>,
+    ) : SyncEvent {
+        override fun toString(): String = "RefreshSyncInfo $appInstanceId $hostInfoList"
+    }
+}

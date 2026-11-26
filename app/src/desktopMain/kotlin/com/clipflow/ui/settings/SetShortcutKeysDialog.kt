@@ -1,0 +1,190 @@
+package com.clipflow.ui.settings
+
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.window.DialogProperties
+import com.clipflow.i18n.GlobalCopywriter
+import com.clipflow.listener.DesktopShortcutKeys.Companion.PASTE
+import com.clipflow.listener.ShortcutKeys
+import com.clipflow.listener.ShortcutKeysListener
+import com.clipflow.listener.sameShortcutAs
+import com.clipflow.notification.MessageType
+import com.clipflow.notification.NotificationManager
+import com.clipflow.ui.LocalAppSizeValueState
+import com.clipflow.ui.base.DialogActionButton
+import com.clipflow.ui.base.DialogButtonType
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.tiny
+import com.clipflow.ui.theme.AppUISize.tiny5X
+import com.clipflow.ui.theme.AppUISize.tinyRoundedCornerShape
+import com.clipflow.ui.theme.AppUISize.xLarge
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Edit
+import com.composables.icons.materialsymbols.rounded.Keyboard
+import org.koin.compose.koinInject
+
+@Composable
+fun SetShortcutKeysDialog(
+    name: String,
+    onDismiss: () -> Unit,
+) {
+    val copywriter = koinInject<GlobalCopywriter>()
+    val shortcutKeys = koinInject<ShortcutKeys>()
+    val shortcutKeysListener = koinInject<ShortcutKeysListener>()
+    val notificationManager = koinInject<NotificationManager>()
+
+    val appSizeValue = LocalAppSizeValueState.current
+
+    DisposableEffect(Unit) {
+        shortcutKeysListener.editShortcutKeysMode = true
+        onDispose {
+            shortcutKeysListener.currentKeys.clear()
+            shortcutKeysListener.editShortcutKeysMode = false
+        }
+    }
+
+    AlertDialog(
+        modifier = Modifier.width(appSizeValue.dialogWidth),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = tiny),
+            ) {
+                Icon(
+                    imageVector = MaterialSymbols.Rounded.Keyboard,
+                    contentDescription = null,
+                    modifier = Modifier.size(xLarge),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(modifier = Modifier.width(medium))
+                Text(
+                    text = copywriter.getText("shortcut_setting_title"),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = tiny),
+                verticalArrangement = Arrangement.spacedBy(xLarge),
+            ) {
+                Text(
+                    text = copywriter.getText("shortcut_setting_desc"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.2f,
+                )
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(appSizeValue.settingsItemHeight)
+                            .border(
+                                tiny5X,
+                                MaterialTheme.colorScheme.onSurface,
+                                tinyRoundedCornerShape,
+                            ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = medium),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            modifier =
+                                Modifier.size(medium),
+                            imageVector = MaterialSymbols.Rounded.Edit,
+                            contentDescription = "edit shortcut key",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        if (shortcutKeysListener.currentKeys.isEmpty()) {
+                            // An empty capture box gives no feedback that the dialog is
+                            // listening; say so until the first key arrives.
+                            Text(
+                                text = copywriter.getText("press_shortcut_keys"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            ShortcutKeyItemView(shortcutKeysListener.currentKeys)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            DialogActionButton(
+                text = copywriter.getText("confirm"),
+                type = DialogButtonType.TONAL,
+            ) {
+                // Cmd+V (the system paste keystroke) is reserved: ClipFlow itself
+                // simulates it to perform a paste. Binding any other action to the same
+                // combination makes the simulated keystroke re-trigger that action,
+                // causing an infinite paste loop (issue #4500). Reject such a binding.
+                val allKeys = shortcutKeys.shortcutKeysCore.value.keys
+                val pasteKeys = allKeys[PASTE] ?: emptyList()
+                val newKeys = shortcutKeysListener.currentKeys
+                if (name != PASTE && newKeys.isNotEmpty() && newKeys.sameShortcutAs(pasteKeys)) {
+                    notificationManager.sendNotification(
+                        title = { it.getText("shortcut_reserved_for_paste") },
+                        messageType = MessageType.Error,
+                    )
+                    return@DialogActionButton
+                }
+                // Two actions bound to one combination would race on every press;
+                // refuse the binding and name the action that already owns it.
+                val conflictingName =
+                    allKeys.entries
+                        .firstOrNull { (otherName, otherKeys) ->
+                            otherName != name && newKeys.isNotEmpty() && newKeys.sameShortcutAs(otherKeys)
+                        }?.key
+                if (conflictingName != null) {
+                    notificationManager.sendNotification(
+                        title = { it.getText("shortcut_already_assigned", it.getText(conflictingName)) },
+                        messageType = MessageType.Error,
+                    )
+                    return@DialogActionButton
+                }
+                if (name != PASTE || shortcutKeysListener.currentKeys.isNotEmpty()) {
+                    shortcutKeys.update(name, shortcutKeysListener.currentKeys)
+                }
+                shortcutKeysListener.currentKeys.clear()
+                onDismiss()
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(copywriter.getText("cancel"))
+            }
+        },
+    )
+}

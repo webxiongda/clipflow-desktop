@@ -9,12 +9,12 @@ versionProperties.load(
         project.projectDir
             .toPath()
             .parent
-            .resolve("app/src/desktopMain/resources/crosspaste-version.properties")
+            .resolve("app/src/desktopMain/resources/clipflow-version.properties")
             .toFile(),
     ),
 )
 
-group = "com.crosspaste"
+group = "com.clipflow"
 version = versionProperties.getProperty("version")
 
 plugins {
@@ -27,7 +27,7 @@ plugins {
 sqldelight {
     databases {
         create("Database") {
-            packageName = "com.crosspaste"
+            packageName = "com.clipflow"
             dialect("app.cash.sqldelight:sqlite-3-25-dialect:${libs.versions.sqldelight.get()}")
         }
     }

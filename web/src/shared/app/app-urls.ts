@@ -4,7 +4,7 @@
  * them as constants since it has no classpath resources.
  */
 export const AppUrls = {
-  homeUrl: "https://crosspaste.com",
-  changeLogUrl: "https://github.com/crosspaste/crosspaste-desktop/blob/main/CHANGELOG.md",
-  issueTrackerUrl: "https://github.com/CrossPaste/crosspaste-desktop/issues",
+  homeUrl: "https://clipflow.com",
+  changeLogUrl: "https://github.com/ClipFlow/clipflow-desktop/blob/main/CHANGELOG.md",
+  issueTrackerUrl: "https://github.com/ClipFlow/clipflow-desktop/issues",
 } as const;

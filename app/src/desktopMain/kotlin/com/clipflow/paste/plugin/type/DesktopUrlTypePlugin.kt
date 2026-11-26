@@ -1,0 +1,95 @@
+package com.clipflow.paste.plugin.type
+
+import com.clipflow.paste.PasteCollector
+import com.clipflow.paste.PasteDataFlavor
+import com.clipflow.paste.PasteDataFlavors.URL_FLAVOR
+import com.clipflow.paste.PasteTransferable
+import com.clipflow.paste.PasteType
+import com.clipflow.paste.PasteWriteScope
+import com.clipflow.paste.item.CreatePasteItemHelper.createUrlPasteItem
+import com.clipflow.paste.item.PasteItem
+import com.clipflow.paste.item.UrlPasteItem
+import com.clipflow.paste.toPasteDataFlavor
+import com.clipflow.platform.Platform
+import java.awt.datatransfer.DataFlavor
+import java.net.MalformedURLException
+import java.net.URL
+
+class DesktopUrlTypePlugin(
+    private val platform: Platform,
+) : UrlTypePlugin {
+
+    companion object {
+        const val URL = "application/x-java-url"
+    }
+
+    override fun getPasteType(): PasteType = PasteType.URL_TYPE
+
+    override fun getIdentifiers(): List<String> = listOf(URL)
+
+    override fun createPrePasteItem(
+        itemIndex: Int,
+        identifier: String,
+        pasteTransferable: PasteTransferable,
+        pasteCollector: PasteCollector,
+    ) {
+        createUrlPasteItem(
+            identifiers = listOf(identifier),
+            url = "",
+        ).let {
+            pasteCollector.preCollectItem(itemIndex, this::class, it)
+        }
+    }
+
+    override suspend fun doLoadRepresentation(
+        transferData: Any,
+        pasteId: Long,
+        itemIndex: Int,
+        identity: String,
+        dataFlavor: PasteDataFlavor,
+        dataFlavorMap: Map<String, List<PasteDataFlavor>>,
+        pasteTransferable: PasteTransferable,
+        pasteCollector: PasteCollector,
+    ) {
+        val urlString =
+            when (transferData) {
+                is String -> transferData
+                is URL -> transferData.toString()
+                else -> return
+            }
+        val update: (PasteItem) -> PasteItem = { pasteItem ->
+            createUrlPasteItem(
+                identifiers = pasteItem.identifiers,
+                url = urlString,
+                extraInfo = pasteItem.extraInfo,
+            )
+        }
+        pasteCollector.updateCollectItem(itemIndex, this::class, update)
+    }
+
+    override fun collectError(
+        error: Throwable,
+        pasteId: Long,
+        itemIndex: Int,
+        pasteCollector: PasteCollector,
+    ) {
+        if (!platform.isWindows() || error !is MalformedURLException) {
+            super.collectError(error, pasteId, itemIndex, pasteCollector)
+        }
+    }
+
+    override suspend fun buildTransferable(
+        pasteItem: PasteItem,
+        scope: PasteWriteScope,
+        map: MutableMap<PasteDataFlavor, Any>,
+    ) {
+        pasteItem as UrlPasteItem
+        @Suppress("DEPRECATION")
+        map[URL_FLAVOR.toPasteDataFlavor()] = URL(pasteItem.url)
+        // application/x-java-url is a Java-private flavor. On Linux AWT exports it
+        // to the native clipboard as-is, so a browser or editor asked to paste finds
+        // no text and does nothing. Offer the URL as plain text as well; a text item
+        // written alongside (mixed category) carries the better text, so keep that.
+        map.putIfAbsent(DataFlavor.stringFlavor.toPasteDataFlavor(), pasteItem.url)
+    }
+}

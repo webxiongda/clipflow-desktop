@@ -4,8 +4,8 @@
 # so the full update flow can be tested without publishing a real release.
 #
 # On the Windows test machine, point the app at this server before launching:
-#   set CROSSPASTE_UPDATE_BASE_URL=http://<this-host>:<port>
-#   "<extracted-old-zip>\bin\CrossPaste.exe"
+#   set CLIPFLOW_UPDATE_BASE_URL=http://<this-host>:<port>
+#   "<extracted-old-zip>\bin\ClipFlow.exe"
 #
 # Requirements: python3 (for the static server), shasum or sha256sum.
 #
@@ -27,7 +27,7 @@ PORT="${4:-8077}"
 
 WORK="$(mktemp -d)/release"
 mkdir -p "$WORK"
-ZIP_NAME="crosspaste-$VER-$REV-windows-amd64.zip"
+ZIP_NAME="clipflow-$VER-$REV-windows-amd64.zip"
 cp "$ZIP_SRC" "$WORK/$ZIP_NAME"
 
 if command -v shasum >/dev/null 2>&1; then
@@ -45,7 +45,7 @@ echo "  $ZIP_NAME"
 echo "  sha256              : $HASH"
 echo
 echo "On the Windows test box (replace <this-host> with this machine's LAN IP):"
-echo "  set CROSSPASTE_UPDATE_BASE_URL=http://<this-host>:$PORT"
+echo "  set CLIPFLOW_UPDATE_BASE_URL=http://<this-host>:$PORT"
 echo
 cd "$WORK"
 exec python3 -m http.server "$PORT"

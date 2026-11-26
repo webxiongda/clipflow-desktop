@@ -1,0 +1,92 @@
+package com.clipflow.notification
+
+import com.clipflow.i18n.GlobalCopywriter
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+
+class NotificationManagerTest {
+
+    private class TestNotificationManager(
+        copywriter: GlobalCopywriter,
+    ) : NotificationManager(copywriter) {
+        override val expiryGrace: Duration = Duration.ZERO
+        val sentNotifications = mutableListOf<Message>()
+        private var nextId = 0
+
+        override fun getMessageId(): Int = nextId++
+
+        override fun doSendNotification(message: Message) {
+            sentNotifications.add(message)
+        }
+    }
+
+    private fun createCopywriter(): GlobalCopywriter {
+        val copywriter = mockk<GlobalCopywriter>()
+        every { copywriter.getText(any(), *anyVararg()) } answers {
+            firstArg<String>()
+        }
+        return copywriter
+    }
+
+    @Test
+    fun `pushNotification adds message to list`() {
+        val manager = TestNotificationManager(createCopywriter())
+        val msg = Message(messageId = 1, title = "Test", messageType = MessageType.Info)
+        manager.pushNotification(msg)
+        assertEquals(1, manager.notificationList.value.size)
+        assertEquals("Test", manager.notificationList.value[0].title)
+    }
+
+    @Test
+    fun `pushNotification prepends new messages to front of list`() {
+        val manager = TestNotificationManager(createCopywriter())
+        manager.pushNotification(Message(messageId = 1, title = "First", messageType = MessageType.Info))
+        manager.pushNotification(Message(messageId = 2, title = "Second", messageType = MessageType.Info))
+        assertEquals("Second", manager.notificationList.value[0].title)
+        assertEquals("First", manager.notificationList.value[1].title)
+    }
+
+    @Test
+    fun `removeNotification removes specific message by id`() {
+        val manager = TestNotificationManager(createCopywriter())
+        manager.pushNotification(Message(messageId = 1, title = "First", messageType = MessageType.Info))
+        manager.pushNotification(Message(messageId = 2, title = "Second", messageType = MessageType.Warning))
+        manager.removeNotification(1)
+        assertEquals(1, manager.notificationList.value.size)
+        assertEquals(2, manager.notificationList.value[0].messageId)
+    }
+
+    @Test
+    fun `removeNotification with non-existent id leaves list unchanged`() {
+        val manager = TestNotificationManager(createCopywriter())
+        manager.pushNotification(Message(messageId = 1, title = "Test", messageType = MessageType.Info))
+        manager.removeNotification(999)
+        assertEquals(1, manager.notificationList.value.size)
+    }
+
+    @Test
+    fun `pushNotification auto-removes expired notification after duration`() =
+        runBlocking {
+            val manager = TestNotificationManager(createCopywriter())
+            val msg = Message(messageId = 1, title = "Expires", messageType = MessageType.Info, duration = 20)
+            manager.pushNotification(msg)
+            assertEquals(1, manager.notificationList.value.size)
+            // Expiry runs on the global io dispatcher, out of reach of virtual time,
+            // so poll it briefly instead of sleeping for a fixed span.
+            withTimeout(1.seconds) {
+                while (manager.notificationList.value.isNotEmpty()) {
+                    delay(10.milliseconds)
+                }
+            }
+            assertTrue(manager.notificationList.value.isEmpty())
+        }
+}

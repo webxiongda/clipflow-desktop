@@ -1,0 +1,59 @@
+package com.clipflow.image
+
+import com.clipflow.path.UserDataPathProvider
+import com.clipflow.platform.Platform
+import com.clipflow.platform.linux.FreedesktopUtils.saveExtIcon
+import com.clipflow.platform.macos.MacAppUtils
+import com.clipflow.platform.windows.JIconExtract
+import okio.Path
+import java.awt.image.BufferedImage
+
+class DesktopFileExtLoader(
+    imageHandler: ImageHandler<BufferedImage>,
+    platform: Platform,
+    userDataPathProvider: UserDataPathProvider,
+) : AbstractFileExtImageLoader(userDataPathProvider) {
+
+    private val toSave: suspend (String, Path, Path) -> Unit =
+        if (platform.isMacos()) {
+            { key, _, result -> macSaveExtIcon(key, result) }
+        } else if (platform.isWindows()) {
+            { _, value, result -> windowsSaveExtIcon(value, result, imageHandler) }
+        } else if (platform.isLinux()) {
+            { key, _, result -> linuxSaveExtIcon(key, result) }
+        } else {
+            throw IllegalStateException("Unsupported platform: $platform")
+        }
+
+    override suspend fun save(
+        key: String,
+        value: Path,
+        result: Path,
+    ) {
+        toSave(key, value, result)
+    }
+}
+
+private fun macSaveExtIcon(
+    key: String,
+    savePath: Path,
+) {
+    MacAppUtils.saveIconByExt(key, savePath.toString())
+}
+
+private suspend fun windowsSaveExtIcon(
+    filePath: Path,
+    savePath: Path,
+    imageHandler: ImageHandler<BufferedImage>,
+) {
+    JIconExtract.getIconForFile(filePath.toFile())?.let { icon ->
+        imageHandler.writeImage(icon, "png", savePath)
+    }
+}
+
+private fun linuxSaveExtIcon(
+    key: String,
+    savePath: Path,
+) {
+    saveExtIcon(key, savePath)
+}

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Publish a CrossPaste release to the Microsoft Store via msstore-cli.
+# Publish a ClipFlow release to the Microsoft Store via msstore-cli.
 #
 # What it does, in order:
 #   1. Downloads the Store MSIX for <version> from the OSS release bucket
-#      (crosspaste-<x.y.z>-store.x64.msix, built by build-release.yml with
+#      (clipflow-<x.y.z>-store.x64.msix, built by build-release.yml with
 #      app.revision=0 because Partner Center only accepts a manifest Version
-#      of x.y.z.0 — the site MSIX crosspaste-<x.y.z>-<revision>.x64.msix is
+#      of x.y.z.0 — the site MSIX clipflow-<x.y.z>-<revision>.x64.msix is
 #      rejected), or uses --msix <path>, and verifies its SHA256 against
 #      checksum.txt plus the manifest Version.
 #   2. Uploads the MSIX into a new pending submission (`msstore publish
@@ -40,7 +40,7 @@
 
 set -euo pipefail
 
-OSS_BASE="https://oss.crosspaste.com"
+OSS_BASE="https://oss.clipflow.com"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WHATS_NEW_DIR="$REPO_ROOT/app/src/desktopMain/resources/whats-new"
 # Store release notes are capped at 1500 characters per listing. awk length()
@@ -85,10 +85,10 @@ else
   SHA256="shasum -a 256"
 fi
 
-# 2.2.1.2706 -> OSS prefix 2.2.1.2706, Store package crosspaste-2.2.1-store.x64.msix
+# 2.2.1.2706 -> OSS prefix 2.2.1.2706, Store package clipflow-2.2.1-store.x64.msix
 # (its manifest Version is 2.2.1.0; the Store assigns the revision itself).
 BASE_VERSION="${VERSION%.*}"
-MSIX_NAME="crosspaste-${BASE_VERSION}-store.x64.msix"
+MSIX_NAME="clipflow-${BASE_VERSION}-store.x64.msix"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT

@@ -1,0 +1,66 @@
+import { AppUrls } from "./app-urls";
+import { getActiveLanguage } from "@/shared/i18n/i18n-core";
+
+/**
+ * Mirrors the Kotlin [ClipFlowWebService] — resolves the locale path
+ * segment of https://clipflow.com so we can deep-link users to the
+ * localized landing / download page.
+ *
+ * The desktop app fetches `/api/meta.json` and caches `localePathMap`;
+ * we do the same here (lazy, in-memory) with a hard-coded fallback for
+ * the cold-start case (no network or before refresh completes).
+ */
+
+interface WebLocale {
+  code: string;
+  label: string;
+  path: string;
+}
+
+interface WebMeta {
+  locales: WebLocale[];
+}
+
+let localePathMap: Record<string, string> = {};
+let inFlightRefresh: Promise<void> | null = null;
+
+async function refresh(): Promise<void> {
+  if (inFlightRefresh) return inFlightRefresh;
+  inFlightRefresh = (async () => {
+    try {
+      const response = await fetch(`${AppUrls.homeUrl}/api/meta.json`, { cache: "no-cache" });
+      if (!response.ok) return;
+      const meta = (await response.json()) as WebMeta;
+      localePathMap = Object.fromEntries(meta.locales.map((l) => [l.code, l.path]));
+    } catch (e) {
+      console.warn("[ClipFlowWebService] Failed to fetch web meta:", e);
+    } finally {
+      inFlightRefresh = null;
+    }
+  })();
+  return inFlightRefresh;
+}
+
+function resolveLocalePath(language: string): string {
+  const map = localePathMap;
+  if (Object.keys(map).length > 0) {
+    return map[language] ?? map["en"] ?? "/en/";
+  }
+  // Fallback before meta.json loads, matching the desktop default.
+  // Matches both "zh" (Simplified) and "zh_hant" (Traditional).
+  return language.startsWith("zh") ? "/" : "/en/";
+}
+
+export const ClipFlowWebService = {
+  refresh,
+
+  /** Build a localized URL like `https://clipflow.com/en/download`. */
+  getWebUrl(language: string, path = ""): string {
+    return `${AppUrls.homeUrl}${resolveLocalePath(language)}${path}`;
+  },
+
+  /** Shortcut that reads the active UI language from storage. */
+  async getLocalizedUrl(path = ""): Promise<string> {
+    return this.getWebUrl(await getActiveLanguage(), path);
+  },
+};

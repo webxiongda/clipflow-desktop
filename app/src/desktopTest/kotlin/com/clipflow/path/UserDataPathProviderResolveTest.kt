@@ -1,0 +1,245 @@
+package com.clipflow.path
+
+import com.clipflow.config.AppConfig
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.paste.PasteCollection
+import com.clipflow.paste.PasteData
+import com.clipflow.paste.PasteState
+import com.clipflow.paste.PasteType
+import com.clipflow.paste.item.CreatePasteItemHelper.createFilesPasteItem
+import com.clipflow.paste.item.FilesPasteItem
+import com.clipflow.presist.DirFileInfoTree
+import com.clipflow.presist.FilesIndexBuilder
+import com.clipflow.presist.SingleFileInfoTree
+import com.clipflow.utils.getJsonUtils
+import io.mockk.every
+import io.mockk.mockk
+import okio.Path.Companion.toOkioPath
+import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.TestInstance
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+class UserDataPathProviderResolveTest {
+
+    companion object {
+        @TempDir
+        lateinit var nioTempFolder: File
+    }
+
+    @Suppress("unused")
+    private val jsonUtils = getJsonUtils()
+
+    private lateinit var userDataPathProvider: UserDataPathProvider
+
+    private lateinit var downloadDir: File
+
+    private lateinit var storageDir: File
+
+    @BeforeAll
+    fun setup() {
+        downloadDir = File(nioTempFolder, "Downloads").also { it.mkdirs() }
+        storageDir = File(nioTempFolder, "storage").also { it.mkdirs() }
+
+        val appConfig = mockk<AppConfig>()
+        every { appConfig.useDefaultStoragePath } returns true
+
+        val configManager = mockk<CommonConfigManager>()
+        every { configManager.getCurrentConfig() } returns appConfig
+
+        val platformProvider = mockk<PlatformUserDataPathProvider>()
+        every { platformProvider.getUserDefaultStoragePath() } returns storageDir.toOkioPath()
+
+        userDataPathProvider = UserDataPathProvider(configManager, platformProvider)
+    }
+
+    private fun createFilesItem(
+        vararg names: String,
+        basePath: String? = null,
+    ): FilesPasteItem =
+        createFilesPasteItem(
+            basePath = basePath,
+            relativePathList = names.toList(),
+            fileInfoTreeMap = names.associate { it to SingleFileInfoTree(size = 64, hash = "h_$it") },
+        )
+
+    // ===== C. UserDataPathProvider.resolve() rename map =====
+
+    @Test
+    fun `download dir no conflict returns empty rename map`() {
+        val subDir = File(downloadDir, "test-no-conflict").also { it.mkdirs() }
+        val item = createFilesItem("unique_file.txt", basePath = subDir.absolutePath)
+
+        val renameMap =
+            userDataPathProvider.resolve(
+                "app1",
+                "2025-01-01",
+                1L,
+                item,
+                true,
+                FilesIndexBuilder(1024),
+            )
+
+        assertTrue(renameMap.isEmpty())
+        assertTrue(File(subDir, "unique_file.txt").exists())
+    }
+
+    @Test
+    fun `download dir one file conflicts returns rename map with resolved name`() {
+        val subDir = File(downloadDir, "test-one-conflict").also { it.mkdirs() }
+        // Pre-create the conflicting file
+        File(subDir, "report.pdf").createNewFile()
+
+        val item = createFilesItem("report.pdf", basePath = subDir.absolutePath)
+
+        val renameMap =
+            userDataPathProvider.resolve(
+                "app1",
+                "2025-01-01",
+                2L,
+                item,
+                true,
+                FilesIndexBuilder(1024),
+            )
+
+        assertEquals(mapOf("report.pdf" to "report(1).pdf"), renameMap)
+        // The file on disk should have the resolved name
+        assertTrue(File(subDir, "report(1).pdf").exists())
+    }
+
+    @Test
+    fun `download dir multiple files partial conflict only conflicting in map`() {
+        val subDir = File(downloadDir, "test-partial-conflict").also { it.mkdirs() }
+        // Only one of two files conflicts
+        File(subDir, "exists.txt").createNewFile()
+
+        val item = createFilesItem("exists.txt", "fresh.txt", basePath = subDir.absolutePath)
+
+        val renameMap =
+            userDataPathProvider.resolve(
+                "app1",
+                "2025-01-01",
+                3L,
+                item,
+                true,
+                FilesIndexBuilder(1024),
+            )
+
+        assertEquals(1, renameMap.size)
+        assertEquals("exists(1).txt", renameMap["exists.txt"])
+        assertTrue(File(subDir, "exists(1).txt").exists())
+        assertTrue(File(subDir, "fresh.txt").exists())
+    }
+
+    @Test
+    fun `non-download dir basePath null always returns empty map`() {
+        // basePath=null means managed storage (unique per paste ID), no conflicts possible
+        val item = createFilesItem("any_file.txt", basePath = null)
+
+        val renameMap =
+            userDataPathProvider.resolve(
+                "app1",
+                "2025-01-01",
+                4L,
+                item,
+                true,
+                FilesIndexBuilder(1024),
+            )
+
+        assertTrue(renameMap.isEmpty())
+    }
+
+    @Test
+    fun `isPull false always returns empty map even for download dir`() {
+        val subDir = File(downloadDir, "test-no-pull").also { it.mkdirs() }
+        File(subDir, "conflict.txt").createNewFile()
+
+        val item = createFilesItem("conflict.txt", basePath = subDir.absolutePath)
+
+        val renameMap =
+            userDataPathProvider.resolve(
+                "app1",
+                "2025-01-01",
+                5L,
+                item,
+                false,
+                FilesIndexBuilder(1024),
+            )
+
+        assertTrue(renameMap.isEmpty())
+    }
+
+    @Test
+    fun `receive paths reject unsafe app instance ids`() {
+        val item = createFilesItem("safe.txt")
+
+        listOf("../peer", "/absolute", "C:\\escape", "peer/child", "peer\u0000id").forEach { appInstanceId ->
+            assertFailsWith<IllegalArgumentException> {
+                userDataPathProvider.validateReceivePaths(appInstanceId, item)
+            }
+        }
+    }
+
+    @Test
+    fun `nested traversal is rejected without creating an escaped file`() {
+        val escapedFile = File(nioTempFolder, "escaped.txt")
+        val item =
+            createFilesPasteItem(
+                relativePathList = listOf("folder"),
+                fileInfoTreeMap =
+                    mapOf(
+                        "folder" to
+                            DirFileInfoTree(
+                                tree = mapOf("../../../../../escaped.txt" to SingleFileInfoTree(64, "hash")),
+                                size = 64,
+                                hash = "dir-hash",
+                            ),
+                    ),
+            )
+
+        assertFailsWith<IllegalArgumentException> {
+            userDataPathProvider.resolve(
+                "app1",
+                "2025-01-01",
+                6L,
+                item,
+                true,
+                FilesIndexBuilder(1024),
+            )
+        }
+
+        assertFalse(escapedFile.exists())
+    }
+
+    @Test
+    fun `deleteReceivedFilesOutsideStorage deletes files and directories outside storage and ignores missing`() {
+        val customDir = File(downloadDir, "test-delete-outside").also { it.mkdirs() }
+        val file1 = File(customDir, "file1.txt").also { it.writeText("content1") }
+        val subDir = File(customDir, "subdir").also { it.mkdirs() }
+        File(subDir, "file2.txt").writeText("content2")
+
+        val item = createFilesItem("file1.txt", "subdir", "missing.txt", basePath = customDir.absolutePath)
+        val pasteData =
+            PasteData(
+                appInstanceId = "app1",
+                pasteAppearItem = item,
+                pasteCollection = PasteCollection(listOf(item)),
+                pasteType = PasteType.FILE_TYPE.type,
+                size = 128,
+                hash = "hash",
+                pasteState = PasteState.LOADING,
+                createTime = 1000L,
+            )
+
+        userDataPathProvider.deleteReceivedFilesOutsideStorage(pasteData)
+
+        assertFalse(file1.exists(), "file1 should be deleted")
+        assertFalse(subDir.exists(), "subdir should be deleted recursively")
+    }
+}

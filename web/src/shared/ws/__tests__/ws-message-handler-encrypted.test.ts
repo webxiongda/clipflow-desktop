@@ -4,7 +4,7 @@ import { WsMessageType, type WsEnvelope } from "../ws-types";
 import { ingestPaste } from "@/shared/paste/paste-ingestion";
 
 vi.mock("@/shared/core", () => ({
-  CrossPasteHash: { hashBytes: vi.fn(() => "hash") },
+  ClipFlowHash: { hashBytes: vi.fn(() => "hash") },
 }));
 vi.mock("@/shared/models/paste-data", () => ({
   parsePasteData: (jsonString: string) => {

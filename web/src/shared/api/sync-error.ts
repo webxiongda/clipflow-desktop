@@ -1,5 +1,5 @@
 /**
- * Mirror of desktop `com.crosspaste.exception.StandardErrorCode`.
+ * Mirror of desktop `com.clipflow.exception.StandardErrorCode`.
  * Only the codes the extension can encounter on /sync/* routes.
  */
 export const StandardErrorCode = {

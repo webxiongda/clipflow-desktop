@@ -1,0 +1,102 @@
+package com.clipflow.paste.item
+
+import com.clipflow.paste.PasteType
+import com.clipflow.paste.item.CreatePasteItemHelper.createImagesPasteItem
+import com.clipflow.paste.item.PasteItem.Companion.getExtraInfoFromJson
+import com.clipflow.paste.item.PasteItem.Companion.parseStoredIdentifiers
+import com.clipflow.presist.FileInfoTree
+import com.clipflow.utils.getJsonUtils
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
+
+@Serializable
+@SerialName("images")
+data class ImagesPasteItem(
+    override val identifiers: List<String>,
+    override val count: Long,
+    override val hash: String,
+    override val size: Long,
+    @Transient
+    override val basePath: String? = null,
+    override val fileInfoTreeMap: Map<String, FileInfoTree>,
+    override val relativePathList: List<String>,
+    override val extraInfo: JsonObject? = null,
+) : PasteItem,
+    PasteImages {
+
+    companion object {
+        val jsonUtils = getJsonUtils()
+    }
+
+    constructor(jsonObject: JsonObject) : this(
+        jsonObject = jsonObject,
+        fileInfoTreeMap =
+            jsonUtils.JSON.decodeFromJsonElement<Map<String, FileInfoTree>>(
+                jsonObject["fileInfoTreeMap"]!!.jsonObject,
+            ),
+    )
+
+    private constructor(
+        jsonObject: JsonObject,
+        fileInfoTreeMap: Map<String, FileInfoTree>,
+    ) : this(
+        identifiers = parseStoredIdentifiers(jsonObject["identifiers"]!!.jsonPrimitive.content),
+        count = fileInfoTreeMap.values.sumOf { it.getCount() },
+        hash = jsonObject["hash"]!!.jsonPrimitive.content,
+        size = jsonObject["size"]!!.jsonPrimitive.long,
+        basePath = jsonObject["basePath"]?.jsonPrimitive?.content,
+        relativePathList =
+            jsonObject["relativePathList"]!!.jsonArray.map {
+                it.jsonPrimitive.content
+            },
+        fileInfoTreeMap = fileInfoTreeMap,
+        extraInfo = getExtraInfoFromJson(jsonObject),
+    )
+
+    override fun getPasteType(): PasteType = PasteType.IMAGE_TYPE
+
+    override fun applyRenameMap(renameMap: Map<String, String>): ImagesPasteItem {
+        val (newRelativePathList, newFileInfoTreeMap) = computeRenamedFileData(renameMap)
+        return copy(relativePathList = newRelativePathList, fileInfoTreeMap = newFileInfoTreeMap)
+    }
+
+    override fun copy(extraInfo: JsonObject?): ImagesPasteItem =
+        createImagesPasteItem(
+            identifiers = identifiers,
+            basePath = basePath,
+            relativePathList = relativePathList,
+            fileInfoTreeMap = fileInfoTreeMap,
+            extraInfo = extraInfo,
+        )
+
+    override fun isValid(): Boolean =
+        count > 0 &&
+            hash.isNotEmpty() &&
+            size > 0 &&
+            fileInfoTreeMap.isNotEmpty() &&
+            relativePathList.isNotEmpty() &&
+            relativePathList.size == fileInfoTreeMap.size
+
+    override fun toStoredJson(): String =
+        buildJsonObject {
+            put("type", getPasteType().type)
+            put("identifiers", identifiers.joinToString(","))
+            put("count", count)
+            put("hash", hash)
+            put("size", size)
+            basePath?.let { put("basePath", it) }
+            put("relativePathList", jsonUtils.JSON.encodeToJsonElement(relativePathList))
+            put("fileInfoTreeMap", jsonUtils.JSON.encodeToJsonElement(fileInfoTreeMap))
+            extraInfo?.let { put("extraInfo", it) }
+        }.toString()
+}

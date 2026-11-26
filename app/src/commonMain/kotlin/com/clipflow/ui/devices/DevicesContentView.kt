@@ -1,0 +1,202 @@
+package com.clipflow.ui.devices
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import com.clipflow.i18n.GlobalCopywriter
+import com.clipflow.net.PasteBonjourService
+import com.clipflow.sync.NearbyDeviceManager
+import com.clipflow.sync.SyncManager
+import com.clipflow.ui.LocalThemeExtState
+import com.clipflow.ui.base.InnerScaffold
+import com.clipflow.ui.base.SectionHeader
+import com.clipflow.ui.theme.AppUISize.large2X
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.small
+import com.clipflow.ui.theme.AppUISize.tiny
+import com.clipflow.ui.theme.AppUISize.tiny2X
+import com.clipflow.ui.theme.AppUISize.tiny3X
+import com.clipflow.ui.theme.AppUISize.tiny5X
+import com.clipflow.ui.theme.AppUISize.titanic
+import com.clipflow.ui.theme.AppUISize.xxLarge
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Add
+import com.composables.icons.materialsymbols.rounded.Refresh
+import org.koin.compose.koinInject
+
+@Composable
+fun DevicesContentView(guideContent: (@Composable () -> Unit)? = null) {
+    val copywriter = koinInject<GlobalCopywriter>()
+    val deviceScopeFactory = koinInject<DeviceScopeFactory>()
+    val nearbyDeviceManager = koinInject<NearbyDeviceManager>()
+    val pasteBonjourService = koinInject<PasteBonjourService>()
+    val syncManager = koinInject<SyncManager>()
+    val syncScopeFactory = koinInject<SyncScopeFactory>()
+
+    val nearbyDevicesList by nearbyDeviceManager.nearbySyncInfos.collectAsState()
+
+    val searching by nearbyDeviceManager.searching.collectAsState()
+
+    val deviceGroups = rememberDeviceGroups()
+
+    val unverifiedSyncRuntimeInfo by syncManager.unverifiedSyncRuntimeInfo.collectAsState()
+
+    var showAddDeviceDialog by remember { mutableStateOf(false) }
+    var showCurrentDeviceDialog by remember { mutableStateOf(false) }
+    var offlineExpanded by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        syncManager.refresh { }
+    }
+
+    unverifiedSyncRuntimeInfo?.let {
+        val scope =
+            remember(it) {
+                deviceScopeFactory.createDeviceScope(it)
+            }
+        scope.TrustDeviceView()
+    }
+
+    InnerScaffold(
+        floatingActionButton = {
+            FilledTonalButton(
+                onClick = { showAddDeviceDialog = true },
+                contentPadding = PaddingValues(horizontal = medium, vertical = tiny),
+                colors =
+                    ButtonDefaults.filledTonalButtonColors(
+                        containerColor = LocalThemeExtState.current.success.surface,
+                        contentColor = LocalThemeExtState.current.success.onContainer,
+                    ),
+                elevation =
+                    ButtonDefaults.filledTonalButtonElevation(
+                        defaultElevation = tiny3X,
+                        pressedElevation = tiny5X,
+                        hoveredElevation = tiny2X,
+                        focusedElevation = tiny3X,
+                    ),
+            ) {
+                Icon(
+                    imageVector = MaterialSymbols.Rounded.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(small),
+                )
+                Spacer(modifier = Modifier.width(tiny3X))
+                Text(
+                    text = copywriter.getText("add_device_manually"),
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        },
+    ) { innerPadding ->
+
+        if (showAddDeviceDialog) {
+            AddDeviceDialog {
+                showAddDeviceDialog = false
+            }
+        }
+
+        if (showCurrentDeviceDialog) {
+            CurrentDeviceDialog {
+                showCurrentDeviceDialog = false
+            }
+        }
+
+        LazyColumn(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(horizontal = medium),
+            contentPadding = PaddingValues(bottom = titanic),
+            verticalArrangement = Arrangement.spacedBy(tiny),
+        ) {
+            myDevicesSection(
+                deviceGroups = deviceGroups,
+                offlineExpanded = offlineExpanded,
+                onOfflineExpandedChange = { offlineExpanded = it },
+                deviceScopeFactory = deviceScopeFactory,
+                leadingItem = {
+                    LocalDeviceRow { showCurrentDeviceDialog = true }
+                },
+            )
+
+            stickyHeader {
+                SectionHeader(
+                    text = "nearby_devices",
+                    topPadding = medium,
+                    trailingContent = {
+                        NearbyRefreshButton(searching) {
+                            pasteBonjourService.refreshAll()
+                        }
+                    },
+                )
+            }
+
+            // A manual refresh must not blank out devices that are already on screen:
+            // the searching placeholder only stands in for an empty list, otherwise the
+            // spinning header icon is the only feedback.
+            if (nearbyDevicesList.isNotEmpty()) {
+                items(nearbyDevicesList, key = { item -> "nearby-${item.appInfo.appInstanceId}" }) { syncInfo ->
+                    val currentSyncInfo by rememberUpdatedState(syncInfo)
+                    val scope =
+                        remember(currentSyncInfo) {
+                            syncScopeFactory.createSyncScope(currentSyncInfo)
+                        }
+                    scope.NearbyDeviceView()
+                }
+            } else if (searching) {
+                item(key = "searching_nearby_devices") {
+                    SearchingNearbyDevices()
+                }
+            } else {
+                item(key = "empty_nearby_devices") {
+                    NotFoundNearByDevices(guideContent = guideContent)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NearbyRefreshButton(
+    searching: Boolean,
+    onClick: () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        enabled = !searching,
+        modifier = Modifier.size(xxLarge),
+    ) {
+        Icon(
+            imageVector = MaterialSymbols.Rounded.Refresh,
+            contentDescription = "refresh",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier =
+                Modifier
+                    .size(large2X)
+                    .spinWhile(searching),
+        )
+    }
+}

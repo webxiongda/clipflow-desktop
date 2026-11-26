@@ -1,0 +1,73 @@
+package com.clipflow.paste
+
+import com.clipflow.app.AppInfo
+import com.clipflow.db.paste.PasteDao
+import com.clipflow.paste.plugin.type.PasteTypePlugin
+import com.clipflow.utils.LoggerExtension.logSuspendExecutionTime
+import io.github.oshai.kotlinlogging.KotlinLogging
+
+class DesktopTransferableConsumer(
+    private val appInfo: AppInfo,
+    private val pasteDao: PasteDao,
+    private val pasteReleaseService: PasteReleaseService,
+    pasteTypePlugins: List<PasteTypePlugin>,
+    private val screenshotCaptureObserver: ScreenshotCaptureObserver = ScreenshotCaptureObserver.NoOp,
+) : TransferableConsumer {
+
+    override val logger = KotlinLogging.logger {}
+
+    private val pasteTypePluginMap: Map<String, PasteTypePlugin> =
+        pasteTypePlugins
+            .flatMap { pasteTypePlugin ->
+                pasteTypePlugin.getIdentifiers().map { it to pasteTypePlugin }
+            }.toMap()
+
+    private fun createDataFlavorMap(pasteTransferable: PasteTransferable): Map<String, List<PasteDataFlavor>> {
+        val dataFlavorMap = LinkedHashMap<String, MutableList<PasteDataFlavor>>()
+        pasteTransferable as DesktopReadTransferable
+        for (flavor in pasteTransferable.transferable.transferDataFlavors) {
+            val humanPresentableName = flavor.humanPresentableName
+            if (!dataFlavorMap.containsKey(humanPresentableName)) {
+                dataFlavorMap[humanPresentableName] = mutableListOf()
+            }
+            dataFlavorMap[humanPresentableName]?.add(flavor.toPasteDataFlavor())
+        }
+        return dataFlavorMap
+    }
+
+    override suspend fun consume(
+        pasteTransferable: PasteTransferable,
+        sourceContext: PasteSourceContext,
+    ): Result<Unit> {
+        return runCatching {
+            logSuspendExecutionTime(logger, "consume") {
+                val dataFlavorMap: Map<String, List<PasteDataFlavor>> = createDataFlavorMap(pasteTransferable)
+
+                dataFlavorMap[LocalOnlyFlavor.humanPresentableName]?.let {
+                    logger.info { "Ignoring local only flavor" }
+                    return@logSuspendExecutionTime
+                }
+
+                val pasteCollector =
+                    PasteCollector(
+                        dataFlavorMap.size,
+                        appInfo,
+                        pasteDao,
+                        pasteReleaseService,
+                        sourceContext,
+                    )
+
+                preCollect(dataFlavorMap, pasteTransferable, pasteCollector)
+                pasteCollector.createPrePasteData()?.also { id ->
+                    updatePasteData(id, dataFlavorMap, pasteTransferable, pasteCollector)
+                    pasteCollector.completeCollect(id)
+                    screenshotCaptureObserver.onCaptured(id)
+                }
+            }
+        }.onFailure { e ->
+            logger.error(e) { "Failed to consume transferable" }
+        }
+    }
+
+    override fun getPlugin(identity: String): PasteTypePlugin? = pasteTypePluginMap[identity]
+}

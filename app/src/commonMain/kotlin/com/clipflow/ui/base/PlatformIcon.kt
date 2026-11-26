@@ -1,0 +1,29 @@
+package com.clipflow.ui.base
+
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.painter.Painter
+import com.clipflow.platform.Platform
+
+@Composable
+fun PlatformIcon(platform: Platform): Painter =
+    if (platform.isMacos()) {
+        macos()
+    } else if (platform.isWindows()) {
+        windows()
+    } else if (platform.isLinux()) {
+        linux()
+    } else if (platform.isIphoneDuo()) {
+        iphoneDuo()
+    } else if (platform.isIphone()) {
+        iphone()
+    } else if (platform.isIpad()) {
+        ipad()
+    } else if (platform.isAndroid()) {
+        android()
+    } else if (platform.isHarmony()) {
+        harmony()
+    } else if (platform.isChromeExtension()) {
+        chromeExtension()
+    } else {
+        question()
+    }

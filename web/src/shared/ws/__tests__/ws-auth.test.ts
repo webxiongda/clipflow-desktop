@@ -70,7 +70,7 @@ const challenge: WsAuthChallenge = {
 describe("canonical payload encoding", () => {
   it("handshakePayload matches the CanonicalWriter wire format", () => {
     const actual = handshakePayload("client-proof", "ext-id", "desktop-id", challenge);
-    const expected = canonical("crosspaste-ws-handshake-v1", [
+    const expected = canonical("clipflow-ws-handshake-v1", [
       [1, utf8("client-proof")],
       [2, utf8("ext-id")],
       [3, utf8("desktop-id")],
@@ -88,7 +88,7 @@ describe("canonical payload encoding", () => {
       requestId: "req-1",
     };
     const actual = envelopePayload("session-1", 5, "ext-id", "desktop-id", envelope);
-    const expected = canonical("crosspaste-ws-envelope-v1", [
+    const expected = canonical("clipflow-ws-envelope-v1", [
       [1, utf8("session-1")],
       [2, u64bytes(5)],
       [3, utf8("ext-id")],
@@ -104,7 +104,7 @@ describe("canonical payload encoding", () => {
   it("encodes a missing requestId as an empty string field", () => {
     const envelope: WsEnvelope = { type: "heartbeat", payload: new Uint8Array(0), encrypted: false };
     const actual = envelopePayload("s", 0, "a", "b", envelope);
-    const expected = canonical("crosspaste-ws-envelope-v1", [
+    const expected = canonical("clipflow-ws-envelope-v1", [
       [1, utf8("s")],
       [2, u64bytes(0)],
       [3, utf8("a")],

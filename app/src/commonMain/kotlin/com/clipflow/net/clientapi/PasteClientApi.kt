@@ -1,0 +1,79 @@
+package com.clipflow.net.clientapi
+
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.exception.StandardErrorCode
+import com.clipflow.exception.standardErrorCodeMap
+import com.clipflow.net.PasteClient
+import com.clipflow.paste.PasteData
+import com.clipflow.sync.RelaySeen
+import com.clipflow.utils.buildUrl
+import io.github.oshai.kotlinlogging.KotlinLogging
+import io.ktor.client.call.body
+import io.ktor.http.*
+import io.ktor.util.reflect.*
+
+class PasteClientApi(
+    private val pasteClient: PasteClient,
+    private val configManager: CommonConfigManager,
+) {
+
+    private val logger = KotlinLogging.logger {}
+
+    suspend fun sendPaste(
+        pasteData: PasteData,
+        targetAppInstanceId: String,
+        seenAppInstanceIds: Set<String> = emptySet(),
+        toUrl: URLBuilder.() -> Unit,
+    ): ClientApiResult {
+        val response =
+            pasteClient.post(
+                message = pasteData,
+                messageType = typeInfo<PasteData>(),
+                timeout = SEND_PASTE_TIMEOUT_MS,
+                headersBuilder = {
+                    append("targetAppInstanceId", targetAppInstanceId)
+                    if (seenAppInstanceIds.isNotEmpty()) {
+                        append(RelaySeen.HEADER, RelaySeen.encode(seenAppInstanceIds))
+                    }
+                    if (configManager.getCurrentConfig().enableEncryptSync) {
+                        append("secure", "1")
+                    }
+                },
+                urlBuilder = {
+                    toUrl()
+                    buildUrl("sync", "paste")
+                },
+            )
+
+        // 422 is the status code for user not allow to receive paste
+        return if (response.status.value == 422) {
+            logger.debug { "$targetAppInstanceId is not allow to receive paste" }
+            SuccessResult()
+        } else if (response.status.value != 200) {
+            runCatching {
+                val failResponse = response.body<FailResponse>()
+                standardErrorCodeMap[failResponse.errorCode]?.let {
+                    createFailureResult(it, failResponse.message)
+                } ?: run {
+                    createFailureResult(
+                        StandardErrorCode.SYNC_PASTE_ERROR,
+                        "sync paste to $targetAppInstanceId fail: ${failResponse.message}",
+                    )
+                }
+            }.getOrElse {
+                createFailureResult(
+                    StandardErrorCode.SYNC_PASTE_ERROR,
+                    "sync paste to $targetAppInstanceId fail",
+                )
+            }
+        } else {
+            SuccessResult()
+        }
+    }
+
+    private companion object {
+        // The receiver persists the paste before ACK, so this must cover its
+        // database and file-metadata preparation rather than only LAN latency.
+        const val SEND_PASTE_TIMEOUT_MS = 10_000L
+    }
+}

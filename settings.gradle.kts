@@ -1,4 +1,4 @@
-rootProject.name = "crosspaste-desktop"
+rootProject.name = "clipflow-desktop"
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {

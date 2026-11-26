@@ -4,16 +4,23 @@ All notable changes to this project will be documented in this file.
 
 # [2.3.1] - 2026-10-28
 # Highlights 🌟
+- 📸 **Screenshot preview bubble**
+  Capturing a screenshot now pops a small always-on-top preview bubble with the
+  newest image; chevrons walk back through recent screenshots without opening the
+  main panel. Capture latency is lower (150 ms burst window instead of 500 ms) and
+  the snapshot backlog holds 32 images so rapid captures are not dropped. Toggle it
+  in Settings → Appearance (`showScreenshotPreview`) or bind the
+  `show_screenshot_preview` shortcut.
 
 - 📋 **Floating paste button fixes**
   Fixed interaction issues with the floating paste button and its panel;
   on Wayland its pastes now reach native Wayland apps, because clipboard
   writes go straight into the Wayland clipboard instead of an XWayland
-  selection that KWin mirrors only while CrossPaste has the focus
+  selection that KWin mirrors only while ClipFlow has the focus
   (#5283 #5284 #5285 #5286 #5292 #5293).
 
 - 🪟 **MSIX packages declare their firewall rules**
-  Inbound TCP/UDP for `bin\CrossPaste.exe` on domain and private networks
+  Inbound TCP/UDP for `bin\ClipFlow.exe` on domain and private networks
   is declared in the package, so Windows stops re-prompting after every
   versioned-path update and no longer accumulates dead prompt rules. The
   CLI execution aliases moved into the main Application, because the
@@ -63,7 +70,7 @@ All notable changes to this project will be documented in this file.
 
 - 🧩 **Local process plugins in the paste context menu**
   A plugin is a folder with a `manifest.json` and a script or program;
-  CrossPaste runs it with the paste on stdin and applies stdout to the
+  ClipFlow runs it with the paste on stdin and applies stdout to the
   clipboard, history, a notification or the browser. Plugins start
   disabled and are managed under Extensions → Plugins. A bundled
   Translate plugin offers a target-language submenu (#5210 #5212 #5228).
@@ -74,9 +81,9 @@ All notable changes to this project will be documented in this file.
   it was offline; remote pastes with invalid content are discarded
   instead of being written to the clipboard (#4897).
 
-- ⌨️ **`crosspaste` is the CLI on Windows installs**
-  Installer and Microsoft Store packages register both `crosspaste` and
-  `crosspaste-cli` as CLI aliases, the Store package ships the CLI, and
+- ⌨️ **`clipflow` is the CLI on Windows installs**
+  Installer and Microsoft Store packages register both `clipflow` and
+  `clipflow-cli` as CLI aliases, the Store package ships the CLI, and
   the control socket moved out of the MSIX-virtualized temp directory so
   CLI commands no longer report the app as not running (#5190 #5191
   #5192 #5193 #5195).
@@ -98,7 +105,7 @@ All notable changes to this project will be documented in this file.
 # Bug Fixes 🐛
 
 - :bug: Keep keyboard focus off search window controls so Enter still pastes after a click (#5267)
-- :bug: Exclude all CrossPaste windows from the Windows previous-app record (#5264)
+- :bug: Exclude all ClipFlow windows from the Windows previous-app record (#5264)
 - :bug: Switch the macOS activation policy when the main window hides so the first search window show is not dismissed (#5262)
 - :bug: Post the macOS paste shortcut as flagged key events without separate modifier key events (#5252)
 - :bug: Send the Windows paste keystroke in one SendInput call with reverse release order, scan codes and extended-key flags (#5250)
@@ -128,13 +135,13 @@ All notable changes to this project will be documented in this file.
 # New Features ✨
 
 - :sparkles: Make the bubble editor modal over the search window and keep it stacked on top (#5266)
-- :sparkles: Attribute OCR and plugin pastes to CrossPaste and show its logo as their source icon (#5240)
+- :sparkles: Attribute OCR and plugin pastes to ClipFlow and show its logo as their source icon (#5240)
 - :sparkles: Catch up on missed pastes when a peer reconnects (#5233)
 - :sparkles: Plugin submenu actions and a target-language picker for Translate (#5221)
 - :sparkles: Run local process plugins from the paste context menu (#5214)
 - :sparkles: Scan local plugins and check their compatibility (#5213)
 - :sparkles: Draw the logo on the brand gradient with a one-stroke trace animation (#5207)
-- :sparkles: Make `crosspaste` launch the CLI on Windows MSIX packages (#5192)
+- :sparkles: Make `clipflow` launch the CLI on Windows MSIX packages (#5192)
 - :lipstick: Outline the main window on Linux so it stands out from other windows (#5204)
 - :fire: Remove the sort toggle from the search window (#5235)
 
@@ -143,7 +150,7 @@ All notable changes to this project will be documented in this file.
 - :hammer: Rename PasteAutoPullService to PastePullTrigger (#5263)
 - :hammer: Expose the pairing v3 dialog state as a StateFlow (#5231)
 - :hammer: Assemble the paste context menu through PasteMenuContributor (#5211)
-- :hammer: Provide static and animated CrossPasteLogo composables (#5209)
+- :hammer: Provide static and animated ClipFlowLogo composables (#5209)
 - :hammer: Make AbstractGlobalCopywriter Compose-free and publish the language as a StateFlow (#5179)
 - :hammer: Move MessageType's Compose colour and icon helpers into ui.base (#5180)
 
@@ -286,7 +293,7 @@ All notable changes to this project will be documented in this file.
 - :bug: Refresh companion flavors when editing a paste from the UI (#5104)
 - :bug: Remove tag links when a tag or paste is deleted (#5102)
 - :bug: Never overwrite an unreadable app config with defaults (#5099)
-- :bug: Keep the owning record when a file is copied out of CrossPaste storage (#5097)
+- :bug: Keep the owning record when a file is copied out of ClipFlow storage (#5097)
 - :bug: Reject import records whose paths escape managed storage (#5095)
 - :bug: Quote FTS search terms so punctuation no longer breaks search (#5093)
 
@@ -426,18 +433,18 @@ All notable changes to this project will be documented in this file.
 # [2.2.0] - 2026-08-31
 # Highlights 🌟
 
-- ⌨️ **CrossPaste CLI**
+- ⌨️ **ClipFlow CLI**
   Every desktop package now ships a native command-line tool,
-  `crosspaste` (macOS offers a one-click terminal command install on
+  `clipflow` (macOS offers a one-click terminal command install on
   first launch, and Windows offers one-click add-to-PATH). Copy with a
-  pipe (`echo hello | crosspaste`), paste, search history with the
+  pipe (`echo hello | clipflow`), paste, search history with the
   same filters as the search window, pick entries in a full-screen
   fuzzy picker, edit an entry in `$EDITOR`, and stream new pastes live
   with `watch` — plus pair devices and run the app headless on
   servers, all from the terminal and your scripts. In sixel-capable
   terminals, clipboard images even preview inline as real pixels. See
   the
-  [CLI guide](https://github.com/CrossPaste/crosspaste-desktop/blob/main/doc/en/CLI.md)
+  [CLI guide](https://github.com/ClipFlow/clipflow-desktop/blob/main/doc/en/CLI.md)
   for every command and example (#243 #3828 #4769 #4771 #4776 #4778
   #4780 #4782 #4786 #4788 #4790 #4809 #4812 #4815 #4817 #4822 #4824
   #4826 #4828 #4836 #4841 #4849 #4850 #4851 #4852 #4859 #4893).
@@ -498,11 +505,11 @@ All notable changes to this project will be documented in this file.
 
 # New Features ✨
 
-- :sparkles: Surface v3 PINs via crosspaste token with acceptance-window arming (#4893)
+- :sparkles: Surface v3 PINs via clipflow token with acceptance-window arming (#4893)
 - :sparkles: Let clicks outside the font dropdown pass through instead of being swallowed (#4887)
 - :sparkles: Add a redacted telemetry observer seam to PairingProtocolV3Service (#4881)
 - :sparkles: Roll out pairing v3 by advertising PAIRING_VERSION 3 gated on the bundled backend (#4877)
-- :sparkles: Add crosspaste token command for acceptor-side pairing code display (#4859)
+- :sparkles: Add clipflow token command for acceptor-side pairing code display (#4859)
 - :sparkles: Wire sixel rendering into paste inline previews and the pick panel (#4852)
 - :sparkles: Add sixel terminal capability probe with DA1 confirmation (#4851)
 - :sparkles: Add raw RGBA transcode endpoint for CLI image previews (#4850)
@@ -515,14 +522,14 @@ All notable changes to this project will be documented in this file.
 - :sparkles: Add an interactive pick command with a full-screen fuzzy picker (#4822)
 - :sparkles: Merge the search command into history with search-window-parity filters (#4817)
 - :sparkles: Add an edit command that round-trips a paste through $EDITOR (#4815)
-- :sparkles: Treat piped stdin to bare crosspaste as implicit copy and add c/p/h command aliases (#4812)
-- :sparkles: Support targeting a dev app instance via CROSSPASTE_USER_DATA_DIR and a :cli:run task (#4810)
+- :sparkles: Treat piped stdin to bare clipflow as implicit copy and add c/p/h command aliases (#4812)
+- :sparkles: Support targeting a dev app instance via CLIPFLOW_USER_DATA_DIR and a :cli:run task (#4810)
 - :sparkles: Fit CLI list previews to the terminal width with cell-accurate truncation (#4809)
 - :sparkles: Dump image bytes and render inline terminal previews from the CLI (#4790)
 - :sparkles: Launch the headless daemon from the CLI and document daemon deployment (#4788)
 - :sparkles: Pair devices from the terminal via the /cli pairing API (#4786)
 - :sparkles: Improve the CLI terminal experience with pipes, formats, colors, and exit codes (#4780)
-- :sparkles: Offer to install the crosspaste terminal command on macOS (#4778)
+- :sparkles: Offer to install the clipflow terminal command on macOS (#4778)
 - :sparkles: Probe app liveness and auto-start the desktop app from the CLI (#4771)
 - :sparkles: Serve a local /cli API over a unix domain socket and make the CLI a pure HTTP client (#4769)
 
@@ -603,12 +610,12 @@ All notable changes to this project will be documented in this file.
   scale proportionally with card size (#4664 #4674 #4676).
 
 - 🍎 **macOS: hide the Dock icon**
-  A new macOS-only setting hides CrossPaste from the Dock, keeping only
+  A new macOS-only setting hides ClipFlow from the Dock, keeping only
   the menu bar icon (#4659 #4677 #4678).
 
 - 🔒 **URL preview fetching can now be turned off**
   A new setting disables fetching a copied link's title and icon, so
-  CrossPaste makes no network request for copied URLs — for privacy,
+  ClipFlow makes no network request for copied URLs — for privacy,
   or to avoid accidentally triggering one-time links. On by default,
   matching the previous behavior (#4742 #4744).
 
@@ -681,7 +688,7 @@ All notable changes to this project will be documented in this file.
 
 # Documentation 📝
 
-- :memo: Replace contact email with support@crosspaste.com (#4671)
+- :memo: Replace contact email with support@clipflow.com (#4671)
 - :memo: Add Video link to README navigation
 - :memo: Bump README download badge to v2.1.6
 
@@ -720,7 +727,7 @@ All notable changes to this project will be documented in this file.
 
 - 🪟 **Works on newer Windows builds without wmic**
   Newer Windows 11 builds have removed the wmic tool, which prevented
-  CrossPaste from generating a device identifier. It now reads the
+  ClipFlow from generating a device identifier. It now reads the
   registry MachineGuid instead (#4580).
 
 - 🔍 **Search window resets properly on reopen**
@@ -730,11 +737,11 @@ All notable changes to this project will be documented in this file.
 
 - 📶 **Device discovery prefers your LAN**
   When a computer has multiple network connections (such as a cellular
-  modem or a phone hotspot), CrossPaste now ranks local network
+  modem or a phone hotspot), ClipFlow now ranks local network
   interfaces first when discovering nearby devices (#4568).
 
 - 🐧 **New Linux ARM64 build**
-  CrossPaste now ships a Linux ARM64 (aarch64) package, so ARM-based
+  ClipFlow now ships a Linux ARM64 (aarch64) package, so ARM-based
   Linux devices are supported too (#4581 #4582).
 
 # Bug Fixes 🐛
@@ -806,7 +813,7 @@ All notable changes to this project will be documented in this file.
 - 🔄 **Faster, more reliable reconnection**
   This release focuses on the connection between your devices. When you
   switch Wi-Fi networks, your network address changes, or your computer
-  wakes from sleep, CrossPaste now rediscovers your other devices and
+  wakes from sleep, ClipFlow now rediscovers your other devices and
   reconnects much faster — no more being stuck "offline" for a long
   time. Even when a device's IP address changes, it reconnects reliably
   (#4506 #4510 #4515 #4519 #4521 #4527 #4529).
@@ -818,7 +825,7 @@ All notable changes to this project will be documented in this file.
 
 - ⬆️ **Windows (portable zip): update from within the app**
   The Windows portable (zip) build can now update itself. When a new
-  version is available, CrossPaste downloads and verifies it, then swaps
+  version is available, ClipFlow downloads and verifies it, then swaps
   in the new build and restarts — no more manually downloading and
   extracting a fresh zip (#4537).
 
@@ -838,7 +845,7 @@ All notable changes to this project will be documented in this file.
 
 - 🐧 **Better clipboard on Linux**
   On Wayland, copied content is picked up with much lower latency, and
-  CrossPaste now correctly identifies which app a copy came from on
+  ClipFlow now correctly identifies which app a copy came from on
   Hyprland and Sway (#4544 #4546).
 
 # Bug Fixes 🐛
@@ -911,17 +918,17 @@ All notable changes to this project will be documented in this file.
 - 🅾️ **Redesigned OCR language settings**
   The OCR (text-from-image) language settings got a cleaner look, with
   each loaded language on its own card. You can now drag languages up
-  and down to set their priority — useful when CrossPaste needs to pick
+  and down to set their priority — useful when ClipFlow needs to pick
   which language to try first on multilingual images (#4473).
 
-- 🛡️ **Windows: heads-up when your network blocks CrossPaste**
+- 🛡️ **Windows: heads-up when your network blocks ClipFlow**
   On Windows, if your network is set to "Public", the Windows Firewall
-  silently blocks CrossPaste from finding nearby devices. CrossPaste
+  silently blocks ClipFlow from finding nearby devices. ClipFlow
   now detects this and offers a one-click shortcut to the Windows
   setting where you can switch the network to Private (#4402 #4404).
 
-- 🖱️ **Smoother drag-and-drop from CrossPaste**
-  Dragging items from the CrossPaste side panel into other apps is
+- 🖱️ **Smoother drag-and-drop from ClipFlow**
+  Dragging items from the ClipFlow side panel into other apps is
   now much better. On macOS, the drag preview no longer hides behind
   the paste window — you can finally see what you're dragging. The
   side panel also handles edge cases more gracefully, so drags don't
@@ -943,7 +950,7 @@ All notable changes to this project will be documented in this file.
 - :bug: Bypass JVM system proxy for LAN sync traffic so peer sync no longer hangs behind a configured HTTP proxy (#4449)
 - :bug: Make smoke-test orphan-JVM kill order-independent so cleanup keeps working if the launcher reorders `-D` flags (#4452)
 - :bug: Replace `dzirbel/compose-material-context-menu` (incompatible with Compose 1.11 `TextContextMenu` API) with an in-tree Material context menu to fix text-field crash (#4448)
-- :bug: Stop smoke-test from killing user's PROD CrossPaste and aborting on macOS bash 3.2 (#4445)
+- :bug: Stop smoke-test from killing user's PROD ClipFlow and aborting on macOS bash 3.2 (#4445)
 - :bug: Serialize Skia codec/bitmap close with in-flight readPixels (#4438)
 - :bug: Bring main window to front on every showMainWindow call (#4408)
 - :bug: Fix COM ref leak and false-positive warning in Windows network detection (#4404)
@@ -1055,13 +1062,13 @@ All notable changes to this project will be documented in this file.
 - ⬆️ **metadata-extractor** 2.19.0 → 2.20.0 (#4323)
 
 ---
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/2.0.0.2192...2.1.3.2297
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/2.0.0.2192...2.1.3.2297
 
 # [2.0.0] - 2026-04-26
 # Highlights 🌟
 
 - 🌍 **Chrome Extension — first-class platform**
-  CrossPaste now ships a Chrome extension that participates in the sync mesh as a real platform. It speaks the same WebSocket sync protocol as the desktop, supports image preview, large file download via WS pulling, right-click copy, install CTAs on oversize notices, and pauses itself via Native Messaging when the desktop app is running on the same machine (#4152 #4157 #4163 #4167 #4175 #4223 #4227 #4230 #4286 #4288).
+  ClipFlow now ships a Chrome extension that participates in the sync mesh as a real platform. It speaks the same WebSocket sync protocol as the desktop, supports image preview, large file download via WS pulling, right-click copy, install CTAs on oversize notices, and pauses itself via Native Messaging when the desktop app is running on the same machine (#4152 #4157 #4163 #4167 #4175 #4223 #4227 #4230 #4286 #4288).
 
 - 🔌 **WebSocket sync protocol**
   A bidirectional WebSocket sync protocol replaces the previous polling/HTTP flow, with batch paste pull endpoints for incremental sync and an active liveness probe. Reconnection uses a fast-then-slow telnet probe strategy for snappier recovery (#4111 #4119 #4107 #4223).
@@ -1079,7 +1086,7 @@ All notable changes to this project will be documented in this file.
 
 - :bug: Keep `javaFileListFlavor` alongside `imageFlavor` for single images (#4302)
 - :bug: Align `PasteCard.canDrag` with `handleDragStart` guards (#4293)
-- :bug: Fail fast when `crosspaste-version.properties` is missing the version key (#4277)
+- :bug: Fail fast when `clipflow-version.properties` is missing the version key (#4277)
 - :bug: Serialize oversize-notice drains to prevent duplicate display (#4275)
 - :bug: Use `probe()` instead of `isConnected()` for extension reconnect (#4258)
 - :bug: Rethrow `CancellationException` in `WsSession.ping` (#4257)
@@ -1151,7 +1158,7 @@ All notable changes to this project will be documented in this file.
 - :hammer: Split `AppSourceIcon` and `SideAppSourceIcon` transformer pipelines (#4271)
 - :hammer: Dedupe concurrent `refresh()` calls and support `zh_hant` fallback (#4256)
 - :hammer: Extract `useCopyWithNotification` hook (#4249)
-- :hammer: Unify Chrome extension version with `crosspaste-version.properties` (#4245)
+- :hammer: Unify Chrome extension version with `clipflow-version.properties` (#4245)
 - :hammer: Polish `WsSessionManager` TOCTOU, ping mutex, `namedScope` (#4224)
 - :hammer: Remove P2P Test debug panel from Chrome extension (#4219)
 - :hammer: Unify coroutine scopes via `namedScope` helper (#4215)
@@ -1164,7 +1171,7 @@ All notable changes to this project will be documented in this file.
 - :hammer: Convert `withTimeout`/`withTimeoutOrNull` `Long` overloads to `Duration` (#4093)
 - :hammer: Abstract `TrustDeviceView` in `DeviceScope` for platform-specific pairing (#4097)
 - :hammer: Replace custom `CountBadgeAuto` with Material 3 `Badge` and add image count badge (#4142)
-- :hammer: Refactor `getCrossPasteWebUrl` to use remote locale config from `meta.json` (#4123)
+- :hammer: Refactor `getClipFlowWebUrl` to use remote locale config from `meta.json` (#4123)
 - :hammer: Refactor `searchPasteData.pasteType` to `pasteTypeList` for multi-type filtering (#4121)
 - :hammer: Reduce default shortcut key bindings to `show_main` and `show_search` only (#4126)
 - :hammer: Migrate `promote.json` to web API and update data model (#4149)
@@ -1203,7 +1210,7 @@ All notable changes to this project will be documented in this file.
 - ⬆️ **Jewel** 0.33.0 → 0.34.0 (#4056 #4129)
 
 ---
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.9.2059...2.0.0.2192
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.2.9.2059...2.0.0.2192
 
 # [1.2.9] - 2026-03-11
 # Highlights 🌟
@@ -1292,13 +1299,13 @@ All notable changes to this project will be documented in this file.
 - ⬆️ **composenativetray-jvm** updated (#3924)
 
 ---
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.8.1999...1.2.9.2059
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.2.8.1999...1.2.9.2059
 
 # [1.2.8] - 2026-02-16
 # Highlights 🌟
 
 - 🤖 **MCP server**
-  CrossPaste now exposes its clipboard history to AI agents through the Model Context Protocol, with a dedicated settings page that lets you toggle the server and configure its port (#3839 #3841).
+  ClipFlow now exposes its clipboard history to AI agents through the Model Context Protocol, with a dedicated settings page that lets you toggle the server and configure its port (#3839 #3841).
 
 - ✏️ **BubbleWindow inline editing**
   A new `BubbleWindow` enables inline text and HTML editing directly from the Search window, with a redesigned `PasteTextEditContentView` featuring a floating toolbar and undo/redo (#3837 #3860 #3862).
@@ -1393,7 +1400,7 @@ All notable changes to this project will be documented in this file.
 # UI Improvements 💄
 
 - :lipstick: Menu item redesign by Pencil (#3720)
-- :lipstick: Replace multiple theme colors with unified `CrossPasteColor` M3 theme (#3718)
+- :lipstick: Replace multiple theme colors with unified `ClipFlowColor` M3 theme (#3718)
 - :lipstick: Use `FlowRow` for adaptive layout of image info components (#3700)
 - :lipstick: Add image file size and format info components (#3697)
 - :art: Improve drag-and-drop overlay visual design (#3844)
@@ -1436,7 +1443,7 @@ All notable changes to this project will be documented in this file.
 - ⬆️ **Compose Hot-Reload** updated (#3890)
 
 ---
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.7.1883...1.2.8.1999
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.2.7.1883...1.2.8.1999
 
 # [1.2.7] - 2026-01-25
 ## 🚀 v1.2.7 - Emergency Hotfix
@@ -1444,15 +1451,15 @@ All notable changes to this project will be documented in this file.
 This release addresses a critical issue where devices were unable to connect or sync due to an incorrectly configured HTTP header.
 
 ### ⚠️ Critical Fixes
-* **Connection Failure**: Removed manually set `Host` reserved header which caused communication timeouts in certain network environments. ([#3691](https://github.com/CrossPaste/crosspaste-desktop/pull/3691))
+* **Connection Failure**: Removed manually set `Host` reserved header which caused communication timeouts in certain network environments. ([#3691](https://github.com/ClipFlow/clipflow-desktop/pull/3691))
 
 ### 📝 Other Improvements
-* **Compatibility**: Fixed `cursorColor` method for better Android compatibility. ([#3681](https://github.com/CrossPaste/crosspaste-desktop/pull/3681))
-* **UI**: Fixed `FileBottomSolid` size calculation logic. ([#3686](https://github.com/CrossPaste/crosspaste-desktop/pull/3686))
-* **Internal**: New `getNoDeletePasteDataFlow` for better multiplatform data handling. ([#3688](https://github.com/CrossPaste/crosspaste-desktop/pull/3688))
+* **Compatibility**: Fixed `cursorColor` method for better Android compatibility. ([#3681](https://github.com/ClipFlow/clipflow-desktop/pull/3681))
+* **UI**: Fixed `FileBottomSolid` size calculation logic. ([#3686](https://github.com/ClipFlow/clipflow-desktop/pull/3686))
+* **Internal**: New `getNoDeletePasteDataFlow` for better multiplatform data handling. ([#3688](https://github.com/ClipFlow/clipflow-desktop/pull/3688))
 
 ---
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.6.1876...1.2.7.1883
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.2.6.1876...1.2.7.1883
 
 # [1.2.6] - 2026-01-21
 # Highlights 🌟
@@ -1542,7 +1549,7 @@ This release addresses a critical issue where devices were unable to connect or 
 
 ---
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.5.1787...1.2.6.1876
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.2.5.1787...1.2.6.1876
 
 # [1.2.5] - 2025-12-19
 # 🚀 Highlights
@@ -1553,17 +1560,17 @@ This is an **urgent release** addressing critical performance issues and streaml
 - ✂️ UI Streamlining: Removed deprecated and redundant UI elements, including the Main Window clipboard display and the Central Search Window, to provide a cleaner and lighter user experience.
 
 ## What's Changed
-* :zap: Convert database operations to async/await pattern with IO dispatcher by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/3489
-* :bug: Fix database concurrency issues by introducing HikariCP by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/3491
-* :lipstick: Remove clipboard display from Main Window (keep in Sidebar only) by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/3492
-* :lipstick: Remove Central Search Window implementation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/3493
-* :hammer: Merge i18n update and sort logic into single script by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/3495
-* :bug: Resolve token refresh freeze and progress bar issues by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/3497
-* :sparkles: Make Server interface async and improve shutdown handling by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/3499
-* :bookmark: Update version to 1.2.5 by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/3502
+* :zap: Convert database operations to async/await pattern with IO dispatcher by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/3489
+* :bug: Fix database concurrency issues by introducing HikariCP by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/3491
+* :lipstick: Remove clipboard display from Main Window (keep in Sidebar only) by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/3492
+* :lipstick: Remove Central Search Window implementation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/3493
+* :hammer: Merge i18n update and sort logic into single script by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/3495
+* :bug: Resolve token refresh freeze and progress bar issues by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/3497
+* :sparkles: Make Server interface async and improve shutdown handling by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/3499
+* :bookmark: Update version to 1.2.5 by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/3502
 
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.4.1778...1.2.5.1787
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.2.4.1778...1.2.5.1787
 
 # [1.2.4] - 2025-12-16
 # Highlights 🌟
@@ -1665,7 +1672,7 @@ This is an **urgent release** addressing critical performance issues and streaml
 
 ---
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.3.1718...1.2.4.1778
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.2.3.1718...1.2.4.1778
 
 # [1.2.3] - 2025-11-25
 # Highlights 🌟
@@ -1768,7 +1775,7 @@ This is an **urgent release** addressing critical performance issues and streaml
 
 ---
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.2.1640...1.2.3.1718
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.2.2.1640...1.2.3.1718
 
 # [1.2.2] - 2025-9-11
 # Highlights 🌟
@@ -1777,7 +1784,7 @@ This is an **urgent release** addressing critical performance issues and streaml
   SQLite is now tuned for better concurrency and responsiveness, improving overall app performance (#3102).
 
 - 🌐 **Network Interface Selection**  
-  Choose which network interface CrossPaste uses for discovery and sync, giving you more control in multi-network environments (#3142).
+  Choose which network interface ClipFlow uses for discovery and sync, giving you more control in multi-network environments (#3142).
 
 - 📱 **Smarter Device Management**  
   Preview device details before adding, and enjoy a fully reactive sync service with dynamic polling intervals for faster, more reliable connections (#3148 #3166 #3171).
@@ -1786,7 +1793,7 @@ This is an **urgent release** addressing critical performance issues and streaml
   HTML clipboard rendering now uses rich text (no Chrome dependency) and RTF is also rendered via RichText (#3193 #3198).
 
 - 🍏 **Native macOS Status Bar**  
-  CrossPaste now integrates with the macOS system status bar, offering a more seamless and intuitive interaction experience(#3222).
+  ClipFlow now integrates with the macOS system status bar, offering a more seamless and intuitive interaction experience(#3222).
 
 # Bug Fixes 🐛
 
@@ -1896,7 +1903,7 @@ This is an **urgent release** addressing critical performance issues and streaml
 
 ---
 
-**Full Changelog**: <https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.1.1551...1.2.2.1640>
+**Full Changelog**: <https://github.com/ClipFlow/clipflow-desktop/compare/1.2.1.1551...1.2.2.1640>
 
 # [1.2.1] - 2025-7-26
 # Highlights 🌟
@@ -1991,7 +1998,7 @@ This is an **urgent release** addressing critical performance issues and streaml
 
 ---
 
-**Full Changelog**: <https://github.com/CrossPaste/crosspaste-desktop/compare/1.2.0.1444...1.2.1.1551>
+**Full Changelog**: <https://github.com/ClipFlow/clipflow-desktop/compare/1.2.0.1444...1.2.1.1551>
 
 # [1.2.0] - 2025-6-10
 # Highlights 🌟
@@ -2012,7 +2019,7 @@ This is an **urgent release** addressing critical performance issues and streaml
   The usage guide now updates automatically when switching languages.
 
 - 🤝 **Recommendation Sharing Feature**  
-  Easily share CrossPaste with your friends through a new built-in recommendation system — complete with preview and social support.
+  Easily share ClipFlow with your friends through a new built-in recommendation system — complete with preview and social support.
 
 - 🧪 **New Unit Tests**  
   Added tests to ensure correct behavior of reactive `SyncRuntimeInfoDao` flows.
@@ -2101,9 +2108,9 @@ This is an **urgent release** addressing critical performance issues and streaml
 
 # New Contributors ✨
 
-- @amir1376 made their first contribution in https://github.com/CrossPaste/crosspaste-desktop/pull/2728
+- @amir1376 made their first contribution in https://github.com/ClipFlow/clipflow-desktop/pull/2728
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.1.2.1375...1.2.0.1444
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.1.2.1375...1.2.0.1444
 
 # [1.1.2] - 2025-5-1
 ## Highlights 🌟
@@ -2113,7 +2120,7 @@ This is an **urgent release** addressing critical performance issues and streaml
   ⚠️ **Important:** Due to differences in storage structure, this is a **non-backward-compatible** migration. Pasteboard data from previous versions will **not be visible** in the new version. However, your old data has **not been deleted** — it's still safely stored in the previous Realm database files.
 
 - 📱 **Android Version Under Review:**
-  The Android version of CrossPaste is currently under review on Google Play. A corresponding changelog will be released when it's officially available.
+  The Android version of ClipFlow is currently under review on Google Play. A corresponding changelog will be released when it's officially available.
 
 - 📤📥 **Import & Export Support for Pasteboard:**  
   You can now import and export your pasteboard data, making backups, transfers, and marketing scenarios much more flexible and powerful.
@@ -2371,510 +2378,510 @@ This is an **urgent release** addressing critical performance issues and streaml
 - :memo: Remove signal documentation
 - :bookmark: Update version to 1.1.0
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.13.1121...1.1.0.1184
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.13.1121...1.1.0.1184
 
 
 # [1.0.13] - 2024-11-6
 ## Bug Fixes
-* :bug: Initialize copywriter and notificationManager in configManager by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2115
-* :bug: Correct image cropping and centering on Android platform by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2144
-* :bug: Improve color format parsing and add conversion tests by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2153
-* :bug: Actively close Realm database when exiting the app to ensure data persistence by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2170
-* :bug: Fix regression issue with image type pasteboard display by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2176
+* :bug: Initialize copywriter and notificationManager in configManager by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2115
+* :bug: Correct image cropping and centering on Android platform by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2144
+* :bug: Improve color format parsing and add conversion tests by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2153
+* :bug: Actively close Realm database when exiting the app to ensure data persistence by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2170
+* :bug: Fix regression issue with image type pasteboard display by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2176
 
 ## New Features
-* :sparkles: Enable ThemeDetector to get current ColorScheme by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2107
-* :sparkles: Enhance QR code generation and parsing by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2133
-* :sparkles: Support auto-filling verification token from cache by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2140
-* :sparkles: Add NoneTransferData to handle invalid data by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2147
-* :sparkles: Support for color data in pasteboard by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2151
-* :sparkles: Add support for updating color palette by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2155
+* :sparkles: Enable ThemeDetector to get current ColorScheme by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2107
+* :sparkles: Enhance QR code generation and parsing by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2133
+* :sparkles: Support auto-filling verification token from cache by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2140
+* :sparkles: Add NoneTransferData to handle invalid data by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2147
+* :sparkles: Support for color data in pasteboard by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2151
+* :sparkles: Add support for updating color palette by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2155
 
 ## UI Improvements
-* :lipstick: Add About item to main settings menu by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2105
-* :art: Wrap DeviceConnectView inside Column for better layout isolation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2111
-* :lipstick: Define QR code scanning interface for mobile by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2129
-* :zap: Improve pasteboard loading logic by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2159
-* :zap: Improve search window state management by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2161
+* :lipstick: Add About item to main settings menu by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2105
+* :art: Wrap DeviceConnectView inside Column for better layout isolation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2111
+* :lipstick: Define QR code scanning interface for mobile by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2129
+* :zap: Improve pasteboard loading logic by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2159
+* :zap: Improve search window state management by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2161
 
 ## Multiplatform  & Refactor & Code Style
-* :hammer: Make AppTokenService multiplatform reusable by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2109
-* :hammer: Move EndpointInfoFactory to commonMain for multiplatform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2113
-* :hammer: Move common pasteboard consumption logic to TransferableConsumer for multiplatform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2117
-* :hammer: Extract remote pasteboard listening service to common interface by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2120
-* :hammer: Refactor QR code UI for multiplatform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2126
-* :hammer: Restructure notification component for multiplatform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2131
-* :hammer: Optimize SyncManager implementation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2138
-* :hammer: Extract PasteMenuService interface for multiplatform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2142
-* :hammer: Migrate pasteboard process plugin to common module for multiplatform support by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2149
-* :hammer: Move shared utils implementation to commonMain by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2157
-* :hammer: Refactor search input into separate component by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2163
-* :hammer: enhance pastetype from object to data class by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2172
+* :hammer: Make AppTokenService multiplatform reusable by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2109
+* :hammer: Move EndpointInfoFactory to commonMain for multiplatform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2113
+* :hammer: Move common pasteboard consumption logic to TransferableConsumer for multiplatform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2117
+* :hammer: Extract remote pasteboard listening service to common interface by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2120
+* :hammer: Refactor QR code UI for multiplatform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2126
+* :hammer: Restructure notification component for multiplatform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2131
+* :hammer: Optimize SyncManager implementation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2138
+* :hammer: Extract PasteMenuService interface for multiplatform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2142
+* :hammer: Migrate pasteboard process plugin to common module for multiplatform support by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2149
+* :hammer: Move shared utils implementation to commonMain by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2157
+* :hammer: Refactor search input into separate component by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2163
+* :hammer: enhance pastetype from object to data class by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2172
 
 ## Dependencies
-* ⬆️ Bump ch.qos.logback:logback-classic from 1.5.8 to 1.5.12 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2136
-* ⬆️ Bump dev.hydraulic.conveyor from 1.11 to 1.12 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2135
-* ⬆️ Bump coil from 3.0.0-rc01 to 3.0.0-rc02 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2164
-* ⬆️ Bump androidx.compose.material3:material3 from 1.3.0 to 1.3.1 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2167
-* ⬆️ Bump compose from 1.7.4 to 1.7.5 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2166
+* ⬆️ Bump ch.qos.logback:logback-classic from 1.5.8 to 1.5.12 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2136
+* ⬆️ Bump dev.hydraulic.conveyor from 1.11 to 1.12 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2135
+* ⬆️ Bump coil from 3.0.0-rc01 to 3.0.0-rc02 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2164
+* ⬆️ Bump androidx.compose.material3:material3 from 1.3.0 to 1.3.1 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2167
+* ⬆️ Bump compose from 1.7.4 to 1.7.5 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2166
 
 ## Documentation
-* :memo: Update changelog / download to 1.0.12 by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2122
-* :memo: Add QR code scanner and token SVG support by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2124
-* 📝 Update `SortPlugin.kt` reference by @emmanuel-ferdman in https://github.com/CrossPaste/crosspaste-desktop/pull/2150
-* :memo: Update version to 1.0.13 by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2174
+* :memo: Update changelog / download to 1.0.12 by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2122
+* :memo: Add QR code scanner and token SVG support by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2124
+* 📝 Update `SortPlugin.kt` reference by @emmanuel-ferdman in https://github.com/ClipFlow/clipflow-desktop/pull/2150
+* :memo: Update version to 1.0.13 by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2174
 
 ## New Contributors
-* @emmanuel-ferdman made their first contribution in https://github.com/CrossPaste/crosspaste-desktop/pull/2150
+* @emmanuel-ferdman made their first contribution in https://github.com/ClipFlow/clipflow-desktop/pull/2150
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.12.1084...1.0.13.1121
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.12.1084...1.0.13.1121
 
 # [1.0.12] - 2024-10-19
 ## Bug Fixes
 
-* :bug: Fix issue where clicking on the main interface causes hidden windows to be hidden by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2035
-* :bug: Fix simple code smells by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2066
-* :bug: Fix the path for referencing resource files in conveyor by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2088
-* :bug: Fix icon path error issue on Linux by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2102
+* :bug: Fix issue where clicking on the main interface causes hidden windows to be hidden by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2035
+* :bug: Fix simple code smells by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2066
+* :bug: Fix the path for referencing resource files in conveyor by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2088
+* :bug: Fix icon path error issue on Linux by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2102
 
 
 ## New Features
 
-* :sparkles: Enhance desktop plugin class implementation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2044
-* :sparkles: Store only image type when copying browser images, remove HTML type by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2046
-* :sparkles: Add separate right-click menu for pasteboard by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2047
-* :sparkles: Add support for RTF format pasteboard data by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2052
+* :sparkles: Enhance desktop plugin class implementation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2044
+* :sparkles: Store only image type when copying browser images, remove HTML type by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2046
+* :sparkles: Add separate right-click menu for pasteboard by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2047
+* :sparkles: Add support for RTF format pasteboard data by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2052
 
 ## UI Improvements
 
-* :zap: Enhance Transparency Checkerboard for improved image background by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2057
-* :zap: Improve device sync logic by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2090
-* :lipstick: Implement backspace functionality in DeviceVerifyView token input by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2092
+* :zap: Enhance Transparency Checkerboard for improved image background by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2057
+* :zap: Improve device sync logic by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2090
+* :lipstick: Implement backspace functionality in DeviceVerifyView token input by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2092
 
 ## Refactor & Code Style
 
-* :hammer: Fix issues found by code inspection by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2031
-* :hammer: Modify HtmlRenderingService API to support asynchronous HTML rendering by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2037
-* :art: Modify plugin interface to add pasteboard source parameter by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2042
-* :hammer: Improve screen routing implementation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2049
-* :hammer: Move getPasteTitle api to PasteItem interface by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2055
-* :memo: Implement ReadWriteConfig to decouple services from specific configurations, facilitating the creation of unit tests by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2074
-* :fire: Remove theme listener interface as it's unnecessary; Compose UI will automatically recompose based on state by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2076
-* :hammer: Implement DialogService in commonMain for multi-platform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2078
-* :hammer: Refactor theme implementation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2080
-* :hammer: Improve UI Reusability and multiplatform Compatibility by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2082
-* :hammer: Optimize code style by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2084
+* :hammer: Fix issues found by code inspection by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2031
+* :hammer: Modify HtmlRenderingService API to support asynchronous HTML rendering by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2037
+* :art: Modify plugin interface to add pasteboard source parameter by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2042
+* :hammer: Improve screen routing implementation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2049
+* :hammer: Move getPasteTitle api to PasteItem interface by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2055
+* :memo: Implement ReadWriteConfig to decouple services from specific configurations, facilitating the creation of unit tests by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2074
+* :fire: Remove theme listener interface as it's unnecessary; Compose UI will automatically recompose based on state by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2076
+* :hammer: Implement DialogService in commonMain for multi-platform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2078
+* :hammer: Refactor theme implementation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2080
+* :hammer: Improve UI Reusability and multiplatform Compatibility by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2082
+* :hammer: Optimize code style by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2084
 
 ## Dependencies
 
-* ⬆️ Bump realm from 2.3.0 to 3.0.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2028
-* ⬆️ Bump compose from 1.7.2 to 1.7.3 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2026
-* ⬆️ Bump kotlin from 2.0.20 to 2.0.21 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2061
-* ⬆️ Bump imageio from 3.11.0 to 3.12.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2060
-* ⬆️ Bump coil from 3.0.0-alpha10 to 3.0.0-rc01 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2058
-* :arrow_up: Bump compose plugin to 1.7.0-rc01 by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2068
-* ⬆️ Bump compose from 1.7.3 to 1.7.4 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2096
-* ⬆️ Bump lifecycle from 2.8.2 to 2.8.3 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2095
-* ⬆️ Bump io.mockk:mockk from 1.13.12 to 1.13.13 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/2094
-* :arrow_up: Bump compose-plugin from 1.7.0-rc01 to 1.7.0 by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2098
+* ⬆️ Bump realm from 2.3.0 to 3.0.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2028
+* ⬆️ Bump compose from 1.7.2 to 1.7.3 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2026
+* ⬆️ Bump kotlin from 2.0.20 to 2.0.21 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2061
+* ⬆️ Bump imageio from 3.11.0 to 3.12.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2060
+* ⬆️ Bump coil from 3.0.0-alpha10 to 3.0.0-rc01 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2058
+* :arrow_up: Bump compose plugin to 1.7.0-rc01 by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2068
+* ⬆️ Bump compose from 1.7.3 to 1.7.4 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2096
+* ⬆️ Bump lifecycle from 2.8.2 to 2.8.3 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2095
+* ⬆️ Bump io.mockk:mockk from 1.13.12 to 1.13.13 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/2094
+* :arrow_up: Bump compose-plugin from 1.7.0-rc01 to 1.7.0 by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2098
 
 ## Documentation
 
-* :memo: Update pasteboard concept, add RTF type support by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2054
-* :memo: Update the current roadmap by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2072
+* :memo: Update pasteboard concept, add RTF type support by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2054
+* :memo: Update the current roadmap by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2072
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.11.1046...1.0.12.1084
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.11.1046...1.0.12.1084
 
 # [1.0.11] - 2024-10-04
 
 ## Bug Fixes
-* :bug: Improve network interface handling and error management by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1956
-* :bug: Fix repeated reading of ImageBitmap by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1965
-* :bug: Fix issue with appSourceFetcher retrieving application icons by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1974
-* :bug: Fix alignment of HTML preview pasteboard by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1976
-* :bug: Fix UI issue where the bottom bar was not displayed in the search window by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2014
-* :bug: Fix issue where shortcut key order affects simulated paste by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2025
+* :bug: Improve network interface handling and error management by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1956
+* :bug: Fix repeated reading of ImageBitmap by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1965
+* :bug: Fix issue with appSourceFetcher retrieving application icons by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1974
+* :bug: Fix alignment of HTML preview pasteboard by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1976
+* :bug: Fix UI issue where the bottom bar was not displayed in the search window by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2014
+* :bug: Fix issue where shortcut key order affects simulated paste by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2025
 
 ## New Features
-* :sparkles: implement voice prompt functionality by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1945
-* :sparkles: Add support for debug mode by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1954
-* :sparkles: Add support for unassigned shortcuts by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1961
-* :sparkles: Support cross-application paste by double-clicking pasteboard item in main window by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2021
+* :sparkles: implement voice prompt functionality by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1945
+* :sparkles: Add support for debug mode by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1954
+* :sparkles: Add support for unassigned shortcuts by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1961
+* :sparkles: Support cross-application paste by double-clicking pasteboard item in main window by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2021
 
 ## Performance & UI Improvements
-* :heavy_plus_sign: Support lifecycle for better control of memory and resource usage by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1959
-* :zap: Use Coil for asynchronous image loading by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1967
-* :lipstick: Unified Divider Style by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2009
-* :lipstick: Add proper padding when displaying text due to HTML rendering failure by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2020
+* :heavy_plus_sign: Support lifecycle for better control of memory and resource usage by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1959
+* :zap: Use Coil for asynchronous image loading by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1967
+* :lipstick: Unified Divider Style by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2009
+* :lipstick: Add proper padding when displaying text due to HTML rendering failure by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2020
 
 ## Refactor & Code Style
-* :hammer: Refactor routing impl for early returns and reduced nesting by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1953
-* :hammer: Refactor pasteboard preview UI using ViewModel by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1963
-* :hammer: Refactor application window implementation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1972
-* :hammer: Replace desktop click methods with pointerInput for multiplatform support by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1980
-* :hammer: Refactor PlatformContext retrieval for multi-platform compatibility by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1982
-* :hammer: Use official method to load drawable resources for multiplatform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1984
-* :hammer: Use expect/actual for FileSystem to support multiple platforms by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1986
-* :hammer: Fix UI multiplatform reuse issues by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1988
-* :hammer: Use official method to load fonts for multiplatform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1990
-* :hammer: Refactor Coil implementation and introduce dependency injection by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1992
-* :hammer: Refactor UI components, move desktop-related component UI abstractions to desktopMain by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1994
-* :hammer: Use dependency injection to obtain LocaleUtils, facilitating multiplatform implementation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1996
-* :hammer: Abstract PasteShimmer to allow independent impl of shimmer effects on different platforms by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1998
-* :hammer: Provide AppEnvUtils to allow multiple platforms to impl equivalent functionality by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2000
-* :hammer: Replace unnecessary BoxWithConstraints with Box by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2002
-* :hammer: Refactor commonMain for multiplatform compatibility by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2011
-* :hammer: Abstract AbstractFaviconLoader and AbstractThumbnailLoader to allow maximum reuse across multiple platforms by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2016
-* :hammer: Use direct import instead of referencing through package by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2018
-* :hammer: Rename ChromeService to HtmlRenderingService by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/2023
+* :hammer: Refactor routing impl for early returns and reduced nesting by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1953
+* :hammer: Refactor pasteboard preview UI using ViewModel by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1963
+* :hammer: Refactor application window implementation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1972
+* :hammer: Replace desktop click methods with pointerInput for multiplatform support by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1980
+* :hammer: Refactor PlatformContext retrieval for multi-platform compatibility by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1982
+* :hammer: Use official method to load drawable resources for multiplatform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1984
+* :hammer: Use expect/actual for FileSystem to support multiple platforms by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1986
+* :hammer: Fix UI multiplatform reuse issues by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1988
+* :hammer: Use official method to load fonts for multiplatform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1990
+* :hammer: Refactor Coil implementation and introduce dependency injection by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1992
+* :hammer: Refactor UI components, move desktop-related component UI abstractions to desktopMain by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1994
+* :hammer: Use dependency injection to obtain LocaleUtils, facilitating multiplatform implementation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1996
+* :hammer: Abstract PasteShimmer to allow independent impl of shimmer effects on different platforms by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1998
+* :hammer: Provide AppEnvUtils to allow multiple platforms to impl equivalent functionality by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2000
+* :hammer: Replace unnecessary BoxWithConstraints with Box by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2002
+* :hammer: Refactor commonMain for multiplatform compatibility by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2011
+* :hammer: Abstract AbstractFaviconLoader and AbstractThumbnailLoader to allow maximum reuse across multiple platforms by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2016
+* :hammer: Use direct import instead of referencing through package by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2018
+* :hammer: Rename ChromeService to HtmlRenderingService by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/2023
 
 ## Dependencies
-* ⬆️ Bump org.jetbrains.kotlinx:kotlinx-serialization-json from 1.7.2 to 1.7.3 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1950
-* ⬆️ Bump io.insert-koin:koin-compose from 4.0.0-RC2 to 4.0.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1949
-* ⬆️ Bump io.insert-koin:koin-core from 3.5.6 to 4.0.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1946
-* ⬆️ Bump compose from 1.7.1 to 1.7.2 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1948
-* ⬆️ Bump org.seleniumhq.selenium:selenium-manager from 4.24.0 to 4.25.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1947
-* ⬆️ Bump com.google.guava:guava from 33.3.0-jre to 33.3.1-jre by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1969
+* ⬆️ Bump org.jetbrains.kotlinx:kotlinx-serialization-json from 1.7.2 to 1.7.3 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1950
+* ⬆️ Bump io.insert-koin:koin-compose from 4.0.0-RC2 to 4.0.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1949
+* ⬆️ Bump io.insert-koin:koin-core from 3.5.6 to 4.0.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1946
+* ⬆️ Bump compose from 1.7.1 to 1.7.2 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1948
+* ⬆️ Bump org.seleniumhq.selenium:selenium-manager from 4.24.0 to 4.25.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1947
+* ⬆️ Bump com.google.guava:guava from 33.3.0-jre to 33.3.1-jre by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1969
 
 ## Build System
-* :construction_worker: Remove the task for extracting selenium-manager, as it is no longer used by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1978
+* :construction_worker: Remove the task for extracting selenium-manager, as it is no longer used by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1978
 
 ## Documentation
-* :memo: Update changelog / download to 1.0.10 by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1939
-* :memo: Commit Message Guide with Emojis by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1944
+* :memo: Update changelog / download to 1.0.10 by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1939
+* :memo: Commit Message Guide with Emojis by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1944
 
 ## Testing
-* :white_check_mark: Add unit tests for NetworkUtils by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1941
+* :white_check_mark: Add unit tests for NetworkUtils by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1941
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.10.1001...1.0.11.1037
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.11.1037...1.0.11.1046
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.10.1001...1.0.11.1037
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.11.1037...1.0.11.1046
 
 # [1.0.10] - 2024-09-21
 
 ## Bug Fixes
-* 🐛 [Mac] Skip listening to initial pasteboard change by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1905
-* 🐛 Use chrome-headless-shell for HTML rendering without window creation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1925
-* 🐛 Fix bug in verifying if proxy is working by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1929
-* 🐛 Fix the issue where the hover effect of the search button on the main UI is affected by TokenView by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1931
-* 🐛 Relax restrictions on private IP addresses by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1927
+* 🐛 [Mac] Skip listening to initial pasteboard change by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1905
+* 🐛 Use chrome-headless-shell for HTML rendering without window creation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1925
+* 🐛 Fix bug in verifying if proxy is working by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1929
+* 🐛 Fix the issue where the hover effect of the search button on the main UI is affected by TokenView by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1931
+* 🐛 Relax restrictions on private IP addresses by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1927
 
 ## New Features
-* ✨ Integrate MurmurHash3 source code and add StreamingMurmurHash3 by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1901
-* ✨ Implement native macOS API for thumbnail generation by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1907
+* ✨ Integrate MurmurHash3 source code and add StreamingMurmurHash3 by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1901
+* ✨ Implement native macOS API for thumbnail generation by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1907
 
 ## UI Improvements
-* 💄 Upgrade UI to Material 3 for reuse on mobile platforms by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1915
+* 💄 Upgrade UI to Material 3 for reuse on mobile platforms by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1915
 
 ## Refactor & Code Style
-* 🔨 Merge FileExtUtils into FileUtils by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1889
-* 🔨 Constants in PasteTypePlugin are now uniformly recorded within the default companion object by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1891
-* 🔨 Fix typos throughout the project by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1897
-* 🔨 Refactor ImageWriter into a generic interface for reuse on mobile platforms by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1899
-* 🔨 Refactor toByteArray to be platform-independent in commonMain by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1909
-* 🔨 Allow null ext in createRandomFileName for multi-platform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1914
-* 🔨 Implement expect/actual pattern for main UI screens by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1921
-* 🔨 Optimize NetUtils and DeviceUtils by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1933
-* 🔨 Move font file to the resource folder in desktopMain by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1936
+* 🔨 Merge FileExtUtils into FileUtils by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1889
+* 🔨 Constants in PasteTypePlugin are now uniformly recorded within the default companion object by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1891
+* 🔨 Fix typos throughout the project by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1897
+* 🔨 Refactor ImageWriter into a generic interface for reuse on mobile platforms by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1899
+* 🔨 Refactor toByteArray to be platform-independent in commonMain by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1909
+* 🔨 Allow null ext in createRandomFileName for multi-platform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1914
+* 🔨 Implement expect/actual pattern for main UI screens by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1921
+* 🔨 Optimize NetUtils and DeviceUtils by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1933
+* 🔨 Move font file to the resource folder in desktopMain by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1936
 
 ## Dependencies
-* ⬆️ Bump jna from 5.14.0 to 5.15.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1893
-* ⬆️ Bump compose from 1.7.0 to 1.7.1 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1892
-* ⬆️ Bump com.squareup.okio:okio from 3.9.0 to 3.9.1 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1894
-* ⬆️ Bump kotlinx-coroutines from 1.8.1 to 1.9.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1895
-* ⬆️ Bump realm from 2.1.0 to 2.3.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1902
-* ⬆️ Bump kotlin from 2.0.10 to 2.0.20 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1728
+* ⬆️ Bump jna from 5.14.0 to 5.15.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1893
+* ⬆️ Bump compose from 1.7.0 to 1.7.1 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1892
+* ⬆️ Bump com.squareup.okio:okio from 3.9.0 to 3.9.1 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1894
+* ⬆️ Bump kotlinx-coroutines from 1.8.1 to 1.9.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1895
+* ⬆️ Bump realm from 2.1.0 to 2.3.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1902
+* ⬆️ Bump kotlin from 2.0.10 to 2.0.20 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1728
 
 ## Build System
-* 👷 Enable expect/actual classes in JVM target with "-Xexpect-actual-classes" flag by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1911
+* 👷 Enable expect/actual classes in JVM target with "-Xexpect-actual-classes" flag by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1911
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.9.974...1.0.10.1001
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.9.974...1.0.10.1001
 
 # [1.0.9] - 2024-09-13
 
 Extensive refactoring has been done to make commonMain reusable across multiple platforms, preparing for mobile implementation
 
 ## Bug Fixes
-* 🐛 [Win] Fix mouse cursor displacement to bottom-right when invoking search window by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1816
-* 🐛 Fix bug where app reads pasteboard on first launch to get CrossPaste source by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1875
-* 🐛 Failure to copy images exceeding backup file threshold by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1879
+* 🐛 [Win] Fix mouse cursor displacement to bottom-right when invoking search window by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1816
+* 🐛 Fix bug where app reads pasteboard on first launch to get ClipFlow source by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1875
+* 🐛 Failure to copy images exceeding backup file threshold by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1879
 
 ## New Features
-* ✨ Add a switch to control whether to read pasteboard content set before application startup by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1877
+* ✨ Add a switch to control whether to read pasteboard content set before application startup by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1877
 
 ## UI Improvements
-* 💄 Hide tray immediately on application exit by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1810
+* 💄 Hide tray immediately on application exit by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1810
 
 ## Optimizations
-* ⚡ Prioritize matching pasteboard when searching and pasting by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1815
+* ⚡ Prioritize matching pasteboard when searching and pasting by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1815
 
 ## Refactor & Code Style
-* 🔨 Refactor atomic operations for cross-platform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1796
-* 🔨 Remove endpoint package and refactor code by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1798
-* 🔨 Internationalize project by converting Chinese comments to English by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1800
-* 🔨 Move Realm storage initialization to commonMain by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1802
-* 🔨 refactor UserDataPathProvider: use cross-platform APIs by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1804
-* 🔨 standardize logger creation within respective classes by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1806
+* 🔨 Refactor atomic operations for cross-platform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1796
+* 🔨 Remove endpoint package and refactor code by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1798
+* 🔨 Internationalize project by converting Chinese comments to English by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1800
+* 🔨 Move Realm storage initialization to commonMain by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1802
+* 🔨 refactor UserDataPathProvider: use cross-platform APIs by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1804
+* 🔨 standardize logger creation within respective classes by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1806
 
 <details>
 <summary>Click to expand detailed Refactor & Code Style notes</summary>
 
-* 🔨 Refactor TxtRecordUtils for multi-platform support by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1809
-* 🔨 Refactor Ktor plugin and client code for multi-platform support by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1812
-* 🔨 Extract cross-platform logic into BaseSyncRouting for iOS/Android reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1818
-* 🔨 Move PasteRouting and PullRouting to commonMain for code reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1820
-* 🔨 Move AppPathProvider interface to desktopMain for desktop-specific impl by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1824
-* 🔨 Merge os package into platform package and rename currentPlatform to getPlatform by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1826
-* 🔨 Refactor file persistence to multiplatform impl by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1828
-* 🔨 Refactor DesktopDeviceManager to DeviceManager for multi-platform support by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1832
-* 🔨 Refactor SyncManager and SyncHandler for multi-platform reuse in iOS and Android by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1834
-* 🔨 Refactor DesktopPasteServer for multi-platform support by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1836
-* 🔨 Refactor QR code generation to support multiplatform by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1847
-* 🔨 Refactor task module for multi-platform impl by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1849
-* 🔨 Convert TaskUtils to multiplatform impl by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1851
-* 🔨 Move Realm query impl to commonMain by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1853
-* 🔨 Migrate clientApi impl to commonMain by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1855
-* 🔨 Migrate SyncInfoFactory to commonMain by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1859
-* 🔨 Adopt Ktor's multiplatform concurrent map by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1857
-* 🔨 Abstract AbstractFileExtImageLoader for multi-platform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1864
-* 🔨 Categorize and sort dependency injection items by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1865
-* 🔨 Rename PlatformUtils to DispatcherUtils for better accuracy by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1867
-* 🔨 Refactor DesktopPasteSyncProcessManager to commonMain for multi-platform reuse by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1869
-* 🔨 Optimize lock usage and replace AtomicLock by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1871
-* 🔨 Refactor Compose dependency injection to use official Koin methods by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1873
-* 🔨 Remove unused implementation of PasteResourceLoader by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1882
-* 🔨 Standardize using 'get' method to obtain utils classes by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1884
-* 🔨 Merge two interfaces of NotificationManager, no need for repetition by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1886
+* 🔨 Refactor TxtRecordUtils for multi-platform support by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1809
+* 🔨 Refactor Ktor plugin and client code for multi-platform support by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1812
+* 🔨 Extract cross-platform logic into BaseSyncRouting for iOS/Android reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1818
+* 🔨 Move PasteRouting and PullRouting to commonMain for code reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1820
+* 🔨 Move AppPathProvider interface to desktopMain for desktop-specific impl by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1824
+* 🔨 Merge os package into platform package and rename currentPlatform to getPlatform by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1826
+* 🔨 Refactor file persistence to multiplatform impl by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1828
+* 🔨 Refactor DesktopDeviceManager to DeviceManager for multi-platform support by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1832
+* 🔨 Refactor SyncManager and SyncHandler for multi-platform reuse in iOS and Android by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1834
+* 🔨 Refactor DesktopPasteServer for multi-platform support by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1836
+* 🔨 Refactor QR code generation to support multiplatform by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1847
+* 🔨 Refactor task module for multi-platform impl by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1849
+* 🔨 Convert TaskUtils to multiplatform impl by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1851
+* 🔨 Move Realm query impl to commonMain by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1853
+* 🔨 Migrate clientApi impl to commonMain by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1855
+* 🔨 Migrate SyncInfoFactory to commonMain by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1859
+* 🔨 Adopt Ktor's multiplatform concurrent map by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1857
+* 🔨 Abstract AbstractFileExtImageLoader for multi-platform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1864
+* 🔨 Categorize and sort dependency injection items by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1865
+* 🔨 Rename PlatformUtils to DispatcherUtils for better accuracy by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1867
+* 🔨 Refactor DesktopPasteSyncProcessManager to commonMain for multi-platform reuse by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1869
+* 🔨 Optimize lock usage and replace AtomicLock by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1871
+* 🔨 Refactor Compose dependency injection to use official Koin methods by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1873
+* 🔨 Remove unused implementation of PasteResourceLoader by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1882
+* 🔨 Standardize using 'get' method to obtain utils classes by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1884
+* 🔨 Merge two interfaces of NotificationManager, no need for repetition by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1886
 </details>
 
 ## Documentation
-* 📝 Add Frequently Asked Questions (FAQ) document by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1794
+* 📝 Add Frequently Asked Questions (FAQ) document by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1794
 
 ## Dependencies
-* ⬆️ Bump ch.qos.logback:logback-classic from 1.5.7 to 1.5.8 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1840
-* ⬆️ Bump dev.hydraulic.conveyor from 1.10 to 1.11 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1839
-* ⬆️ Bump compose from 1.6.8 to 1.7.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1837
+* ⬆️ Bump ch.qos.logback:logback-classic from 1.5.7 to 1.5.8 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1840
+* ⬆️ Bump dev.hydraulic.conveyor from 1.10 to 1.11 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1839
+* ⬆️ Bump compose from 1.6.8 to 1.7.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1837
 
 ## New Contributors
 * @sunxiang0918 Thanks for providing multiple detailed bug reproduction processes
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.8.925...1.0.9.974
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.8.925...1.0.9.974
 
 # [1.0.8] - 2024-09-04
 
 ## Bug Fixes
-* 🐛 Resolve bug in application version check by @guiyanakuang in [#1726](https://github.com/CrossPaste/crosspaste-desktop/pull/1726)
-* 🐛 Fix hash encoding and refactor it to implement as cross-platform code by @guiyanakuang in [#1754](https://github.com/CrossPaste/crosspaste-desktop/pull/1754)
-* 🐛 Application crash on system tray icon click sigsegv error by @guiyanakuang in [#1756](https://github.com/CrossPaste/crosspaste-desktop/pull/1756)
-* 🐛 [Linux] Fix main window display position by @guiyanakuang in [#1758](https://github.com/CrossPaste/crosspaste-desktop/pull/1758)
-* 🐛 Use IPv4 and disable IPv6 addresses by @guiyanakuang in [#1772](https://github.com/CrossPaste/crosspaste-desktop/pull/1772)
-* 🐛 Fix pasteboard sync bugs by @guiyanakuang in [#1773](https://github.com/CrossPaste/crosspaste-desktop/pull/1773)
-* 🐛 Update trusted device info based on listeners by @guiyanakuang in [#1785](https://github.com/CrossPaste/crosspaste-desktop/pull/1785)
-* 🐛 Set ChromeServiceModule files as executable before execution by @guiyanakuang in [#1789](https://github.com/CrossPaste/crosspaste-desktop/pull/1789)
+* 🐛 Resolve bug in application version check by @guiyanakuang in [#1726](https://github.com/ClipFlow/clipflow-desktop/pull/1726)
+* 🐛 Fix hash encoding and refactor it to implement as cross-platform code by @guiyanakuang in [#1754](https://github.com/ClipFlow/clipflow-desktop/pull/1754)
+* 🐛 Application crash on system tray icon click sigsegv error by @guiyanakuang in [#1756](https://github.com/ClipFlow/clipflow-desktop/pull/1756)
+* 🐛 [Linux] Fix main window display position by @guiyanakuang in [#1758](https://github.com/ClipFlow/clipflow-desktop/pull/1758)
+* 🐛 Use IPv4 and disable IPv6 addresses by @guiyanakuang in [#1772](https://github.com/ClipFlow/clipflow-desktop/pull/1772)
+* 🐛 Fix pasteboard sync bugs by @guiyanakuang in [#1773](https://github.com/ClipFlow/clipflow-desktop/pull/1773)
+* 🐛 Update trusted device info based on listeners by @guiyanakuang in [#1785](https://github.com/ClipFlow/clipflow-desktop/pull/1785)
+* 🐛 Set ChromeServiceModule files as executable before execution by @guiyanakuang in [#1789](https://github.com/ClipFlow/clipflow-desktop/pull/1789)
 
 ## New Features
-* ✨ Add manual IP and port input for connection by @guiyanakuang in [#1731](https://github.com/CrossPaste/crosspaste-desktop/pull/1731)
-* ✨ Support direct modification of text pasteboard content by @guiyanakuang in [#1732](https://github.com/CrossPaste/crosspaste-desktop/pull/1732)
-* ✨ Add shortcut key for pasting primary type by @guiyanakuang in [#1752](https://github.com/CrossPaste/crosspaste-desktop/pull/1752)
-* ✨ Detect and notify API compatibility when different client versions connect by @guiyanakuang in [#1769](https://github.com/CrossPaste/crosspaste-desktop/pull/1769)
-* ✨ Support active refreshing of device connections by @guiyanakuang in [#1777](https://github.com/CrossPaste/crosspaste-desktop/pull/1777)
+* ✨ Add manual IP and port input for connection by @guiyanakuang in [#1731](https://github.com/ClipFlow/clipflow-desktop/pull/1731)
+* ✨ Support direct modification of text pasteboard content by @guiyanakuang in [#1732](https://github.com/ClipFlow/clipflow-desktop/pull/1732)
+* ✨ Add shortcut key for pasting primary type by @guiyanakuang in [#1752](https://github.com/ClipFlow/clipflow-desktop/pull/1752)
+* ✨ Detect and notify API compatibility when different client versions connect by @guiyanakuang in [#1769](https://github.com/ClipFlow/clipflow-desktop/pull/1769)
+* ✨ Support active refreshing of device connections by @guiyanakuang in [#1777](https://github.com/ClipFlow/clipflow-desktop/pull/1777)
 
 ## UI Improvements
-* 💄 Enhance device connection refresh interaction by @guiyanakuang in [#1783](https://github.com/CrossPaste/crosspaste-desktop/pull/1783)
+* 💄 Enhance device connection refresh interaction by @guiyanakuang in [#1783](https://github.com/ClipFlow/clipflow-desktop/pull/1783)
 
 ## Optimizations
-* ⚡ Replace MD5 with Murmur3 128-bit hash for improved large file performance by @guiyanakuang in [#1745](https://github.com/CrossPaste/crosspaste-desktop/pull/1745)
+* ⚡ Replace MD5 with Murmur3 128-bit hash for improved large file performance by @guiyanakuang in [#1745](https://github.com/ClipFlow/clipflow-desktop/pull/1745)
 
 ## Refactor & Code Style
-* 🔨 Move logic for binding desktop UI in AppWindowManager from commonMain to desktopMain by @guiyanakuang in [#1735](https://github.com/CrossPaste/crosspaste-desktop/pull/1735)
-* 🔨 Move cross platform utility methods to commonmain by @guiyanakuang in [#1739](https://github.com/CrossPaste/crosspaste-desktop/pull/1739)
-* 🔨 Refactor file operations using okio for cross-platform compatibility and add desktop unit tests by @guiyanakuang in [#1743](https://github.com/CrossPaste/crosspaste-desktop/pull/1743)
-* 🔨 Move PasteRealm from desktopMain to commonMain by @guiyanakuang in [#1748](https://github.com/CrossPaste/crosspaste-desktop/pull/1748)
-* ✏️ Correct the spelling mistakes in the list of methods. by @sunxiang0918 in [#1737](https://github.com/CrossPaste/crosspaste-desktop/pull/1737)
+* 🔨 Move logic for binding desktop UI in AppWindowManager from commonMain to desktopMain by @guiyanakuang in [#1735](https://github.com/ClipFlow/clipflow-desktop/pull/1735)
+* 🔨 Move cross platform utility methods to commonmain by @guiyanakuang in [#1739](https://github.com/ClipFlow/clipflow-desktop/pull/1739)
+* 🔨 Refactor file operations using okio for cross-platform compatibility and add desktop unit tests by @guiyanakuang in [#1743](https://github.com/ClipFlow/clipflow-desktop/pull/1743)
+* 🔨 Move PasteRealm from desktopMain to commonMain by @guiyanakuang in [#1748](https://github.com/ClipFlow/clipflow-desktop/pull/1748)
+* ✏️ Correct the spelling mistakes in the list of methods. by @sunxiang0918 in [#1737](https://github.com/ClipFlow/clipflow-desktop/pull/1737)
 
 ## Documentation
-* 📝 Remove description of first-time chromeDriver / chrome-headless-shell download from README by @guiyanakuang in [#1760](https://github.com/CrossPaste/crosspaste-desktop/pull/1760)
-* 📝 Move doc to separate directory to reduce clutter in main source folder by @guiyanakuang in [#1775](https://github.com/CrossPaste/crosspaste-desktop/pull/1775)
+* 📝 Remove description of first-time chromeDriver / chrome-headless-shell download from README by @guiyanakuang in [#1760](https://github.com/ClipFlow/clipflow-desktop/pull/1760)
+* 📝 Move doc to separate directory to reduce clutter in main source folder by @guiyanakuang in [#1775](https://github.com/ClipFlow/clipflow-desktop/pull/1775)
 
 ## Dependencies
-* ⬆️ Bump org.jetbrains.kotlinx:kotlinx-datetime from 0.6.0 to 0.6.1 by @dependabot in [#1727](https://github.com/CrossPaste/crosspaste-desktop/pull/1727)
-* ⬆️ Bump org.jmdns:jmdns from 3.5.11 to 3.5.12 by @dependabot in [#1729](https://github.com/CrossPaste/crosspaste-desktop/pull/1729)
-* ⬆️ Bump org.seleniumhq.selenium:selenium-manager from 4.23.1 to 4.24.0 by @dependabot in [#1767](https://github.com/CrossPaste/crosspaste-desktop/pull/1767)
-* ⬆️ Bump org.jetbrains.kotlinx:kotlinx-serialization-json from 1.7.1 to 1.7.2 by @dependabot in [#1766](https://github.com/CrossPaste/crosspaste-desktop/pull/1766)
-* ⬆️ Bump org.yaml:snakeyaml from 2.2 to 2.3 by @dependabot in [#1768](https://github.com/CrossPaste/crosspaste-desktop/pull/1768)
+* ⬆️ Bump org.jetbrains.kotlinx:kotlinx-datetime from 0.6.0 to 0.6.1 by @dependabot in [#1727](https://github.com/ClipFlow/clipflow-desktop/pull/1727)
+* ⬆️ Bump org.jmdns:jmdns from 3.5.11 to 3.5.12 by @dependabot in [#1729](https://github.com/ClipFlow/clipflow-desktop/pull/1729)
+* ⬆️ Bump org.seleniumhq.selenium:selenium-manager from 4.23.1 to 4.24.0 by @dependabot in [#1767](https://github.com/ClipFlow/clipflow-desktop/pull/1767)
+* ⬆️ Bump org.jetbrains.kotlinx:kotlinx-serialization-json from 1.7.1 to 1.7.2 by @dependabot in [#1766](https://github.com/ClipFlow/clipflow-desktop/pull/1766)
+* ⬆️ Bump org.yaml:snakeyaml from 2.2 to 2.3 by @dependabot in [#1768](https://github.com/ClipFlow/clipflow-desktop/pull/1768)
 
 ## New Contributors
-* @sunxiang0918 made their first contribution in [#1737](https://github.com/CrossPaste/crosspaste-desktop/pull/1737)
+* @sunxiang0918 made their first contribution in [#1737](https://github.com/ClipFlow/clipflow-desktop/pull/1737)
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.7.891...1.0.8.925
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.7.891...1.0.8.925
 
 # [1.0.7] - 2024-08-23
 
 **📦 Reduced installation package size by 50% through optimizations**
 
 ## Bug Fixes
-* 🐛 Fix pasteboard listener and sync encryption UI refresh by @guiyanakuang in [#1679](https://github.com/CrossPaste/crosspaste-desktop/pull/1679)
-* 🐛 Fix DesktopSyncManager exit exception issue by @guiyanakuang in [#1683](https://github.com/CrossPaste/crosspaste-desktop/pull/1683)
-* 🐛 Prevent Dev/Test version from modifying boot startup flag by @guiyanakuang in [#1684](https://github.com/CrossPaste/crosspaste-desktop/pull/1684)
-* 🐛 Reimplemented opening file copies in temporary directory by @guiyanakuang in [#1685](https://github.com/CrossPaste/crosspaste-desktop/pull/1685)
-* 🐛 Correctly detect user proxy settings by @guiyanakuang in [#1703](https://github.com/CrossPaste/crosspaste-desktop/pull/1703)
-* 🐛 Add missing listener for backtick (`) key by @guiyanakuang in [#1704](https://github.com/CrossPaste/crosspaste-desktop/pull/1704)
-* 🐛 Accurately obtain local ip address by @guiyanakuang in [#1705](https://github.com/CrossPaste/crosspaste-desktop/pull/1705)
+* 🐛 Fix pasteboard listener and sync encryption UI refresh by @guiyanakuang in [#1679](https://github.com/ClipFlow/clipflow-desktop/pull/1679)
+* 🐛 Fix DesktopSyncManager exit exception issue by @guiyanakuang in [#1683](https://github.com/ClipFlow/clipflow-desktop/pull/1683)
+* 🐛 Prevent Dev/Test version from modifying boot startup flag by @guiyanakuang in [#1684](https://github.com/ClipFlow/clipflow-desktop/pull/1684)
+* 🐛 Reimplemented opening file copies in temporary directory by @guiyanakuang in [#1685](https://github.com/ClipFlow/clipflow-desktop/pull/1685)
+* 🐛 Correctly detect user proxy settings by @guiyanakuang in [#1703](https://github.com/ClipFlow/clipflow-desktop/pull/1703)
+* 🐛 Add missing listener for backtick (`) key by @guiyanakuang in [#1704](https://github.com/ClipFlow/clipflow-desktop/pull/1704)
+* 🐛 Accurately obtain local ip address by @guiyanakuang in [#1705](https://github.com/ClipFlow/clipflow-desktop/pull/1705)
 
 ## New Features
-* ✨ Implement automatic UI display on first app launch by @guiyanakuang in [#1680](https://github.com/CrossPaste/crosspaste-desktop/pull/1680)
-* 💄 Add support for displaying creation time in pasteboard details by @guiyanakuang in [#1691](https://github.com/CrossPaste/crosspaste-desktop/pull/1691)
-* Add Ctrl+N and Ctrl+P shortcuts to search window by @Blushyes in [#1706](https://github.com/CrossPaste/crosspaste-desktop/pull/1706)
+* ✨ Implement automatic UI display on first app launch by @guiyanakuang in [#1680](https://github.com/ClipFlow/clipflow-desktop/pull/1680)
+* 💄 Add support for displaying creation time in pasteboard details by @guiyanakuang in [#1691](https://github.com/ClipFlow/clipflow-desktop/pull/1691)
+* Add Ctrl+N and Ctrl+P shortcuts to search window by @Blushyes in [#1706](https://github.com/ClipFlow/clipflow-desktop/pull/1706)
 
 ## UI Improvements
-* 💄 Token and QR code refresh to add progress bar by @guiyanakuang in [#1688](https://github.com/CrossPaste/crosspaste-desktop/pull/1688)
+* 💄 Token and QR code refresh to add progress bar by @guiyanakuang in [#1688](https://github.com/ClipFlow/clipflow-desktop/pull/1688)
 
 ## Documentation
-* 📝 Optimize feature descriptions in README by @guiyanakuang in [#1678](https://github.com/CrossPaste/crosspaste-desktop/pull/1678)
-* 📝 Create project roadmap document by @guiyanakuang in [#1687](https://github.com/CrossPaste/crosspaste-desktop/pull/1687)
-* 📝 Add badges for technology stack and project information by @guiyanakuang in [#1690](https://github.com/CrossPaste/crosspaste-desktop/pull/1690)
-* 📝 Add official website link to README by @guiyanakuang in [#1700](https://github.com/CrossPaste/crosspaste-desktop/pull/1700)
+* 📝 Optimize feature descriptions in README by @guiyanakuang in [#1678](https://github.com/ClipFlow/clipflow-desktop/pull/1678)
+* 📝 Create project roadmap document by @guiyanakuang in [#1687](https://github.com/ClipFlow/clipflow-desktop/pull/1687)
+* 📝 Add badges for technology stack and project information by @guiyanakuang in [#1690](https://github.com/ClipFlow/clipflow-desktop/pull/1690)
+* 📝 Add official website link to README by @guiyanakuang in [#1700](https://github.com/ClipFlow/clipflow-desktop/pull/1700)
 
 ## Dependencies
-* ⬆️ Bump selenium from 4.23.0 to 4.23.1 by @dependabot in [#1669](https://github.com/CrossPaste/crosspaste-desktop/pull/1669)
-* ⬆️ Bump ch.qos.logback:logback-classic from 1.5.6 to 1.5.7 by @dependabot in [#1710](https://github.com/CrossPaste/crosspaste-desktop/pull/1710)
-* ⬆️ Bump com.valentinilk.shimmer:compose-shimmer from 1.3.0 to 1.3.1 by @dependabot in [#1709](https://github.com/CrossPaste/crosspaste-desktop/pull/1709)
-* ⬆️ Bump com.google.guava:guava from 33.2.1-jre to 33.3.0-jre by @dependabot in [#1708](https://github.com/CrossPaste/crosspaste-desktop/pull/1708)
+* ⬆️ Bump selenium from 4.23.0 to 4.23.1 by @dependabot in [#1669](https://github.com/ClipFlow/clipflow-desktop/pull/1669)
+* ⬆️ Bump ch.qos.logback:logback-classic from 1.5.6 to 1.5.7 by @dependabot in [#1710](https://github.com/ClipFlow/clipflow-desktop/pull/1710)
+* ⬆️ Bump com.valentinilk.shimmer:compose-shimmer from 1.3.0 to 1.3.1 by @dependabot in [#1709](https://github.com/ClipFlow/clipflow-desktop/pull/1709)
+* ⬆️ Bump com.google.guava:guava from 33.2.1-jre to 33.3.0-jre by @dependabot in [#1708](https://github.com/ClipFlow/clipflow-desktop/pull/1708)
 
 ## Optimizations
-* 🚀 Optimize package size: Avoid bundling chrome-driver and chrome-headless-shell by @guiyanakuang in [#1698](https://github.com/CrossPaste/crosspaste-desktop/pull/1698)
-* 📈 [win] Prevent exceptions from URL checks printing by @guiyanakuang in [#1722](https://github.com/CrossPaste/crosspaste-desktop/pull/1722)
+* 🚀 Optimize package size: Avoid bundling chrome-driver and chrome-headless-shell by @guiyanakuang in [#1698](https://github.com/ClipFlow/clipflow-desktop/pull/1698)
+* 📈 [win] Prevent exceptions from URL checks printing by @guiyanakuang in [#1722](https://github.com/ClipFlow/clipflow-desktop/pull/1722)
 
 ## New Contributors
-* @Blushyes made their first contribution in [#1706](https://github.com/CrossPaste/crosspaste-desktop/pull/1706)
+* @Blushyes made their first contribution in [#1706](https://github.com/ClipFlow/clipflow-desktop/pull/1706)
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.6.862...1.0.7.891
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.6.862...1.0.7.891
 
 # [1.0.6] - 2024-08-11
 
 ## Bug Fixes
-* 🐛 Resolve delayed PrevAppName refresh in search UI by @guiyanakuang in [#1649](https://github.com/CrossPaste/crosspaste-desktop/pull/1649)
-* 🐛 Correct previous app info retrieval by @guiyanakuang in [#1651](https://github.com/CrossPaste/crosspaste-desktop/pull/1651)
-* :bug: Fix check-metadata-url address for version checking by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1667
+* 🐛 Resolve delayed PrevAppName refresh in search UI by @guiyanakuang in [#1649](https://github.com/ClipFlow/clipflow-desktop/pull/1649)
+* 🐛 Correct previous app info retrieval by @guiyanakuang in [#1651](https://github.com/ClipFlow/clipflow-desktop/pull/1651)
+* :bug: Fix check-metadata-url address for version checking by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1667
 
 ## New Features
-* ✨ Add default configuration to limit auto-backup file size by @guiyanakuang in [#1629](https://github.com/CrossPaste/crosspaste-desktop/pull/1629)
-* ✨ Add default configuration to limit file size for auto-sync across devices by @guiyanakuang in [#1630](https://github.com/CrossPaste/crosspaste-desktop/pull/1630)
-* ✨ Support customizable pasteboard storage path by @guiyanakuang in [#1633](https://github.com/CrossPaste/crosspaste-desktop/pull/1633)
-* ✨ Add shortcut for pasting plain text by @guiyanakuang in [#1640](https://github.com/CrossPaste/crosspaste-desktop/pull/1640)
-* ✨ Add double-click quick copy feature by @guiyanakuang in [#1642](https://github.com/CrossPaste/crosspaste-desktop/pull/1642)
-* ✨ Add one-click clear clipboard feature excluding favorites by @guiyanakuang in [#1643](https://github.com/CrossPaste/crosspaste-desktop/pull/1643)
+* ✨ Add default configuration to limit auto-backup file size by @guiyanakuang in [#1629](https://github.com/ClipFlow/clipflow-desktop/pull/1629)
+* ✨ Add default configuration to limit file size for auto-sync across devices by @guiyanakuang in [#1630](https://github.com/ClipFlow/clipflow-desktop/pull/1630)
+* ✨ Support customizable pasteboard storage path by @guiyanakuang in [#1633](https://github.com/ClipFlow/clipflow-desktop/pull/1633)
+* ✨ Add shortcut for pasting plain text by @guiyanakuang in [#1640](https://github.com/ClipFlow/clipflow-desktop/pull/1640)
+* ✨ Add double-click quick copy feature by @guiyanakuang in [#1642](https://github.com/ClipFlow/clipflow-desktop/pull/1642)
+* ✨ Add one-click clear clipboard feature excluding favorites by @guiyanakuang in [#1643](https://github.com/ClipFlow/clipflow-desktop/pull/1643)
 
 ## UI Improvements
-* 💄 Add UI configuration to modify maxBackupFileSize, enabledSyncFileSizeLimit, and maxSyncFileSize by @guiyanakuang in [#1639](https://github.com/CrossPaste/crosspaste-desktop/pull/1639)
-* 💄 Resolve text overflow in DialogButtonsView buttons by @guiyanakuang in [#1652](https://github.com/CrossPaste/crosspaste-desktop/pull/1652)
+* 💄 Add UI configuration to modify maxBackupFileSize, enabledSyncFileSizeLimit, and maxSyncFileSize by @guiyanakuang in [#1639](https://github.com/ClipFlow/clipflow-desktop/pull/1639)
+* 💄 Resolve text overflow in DialogButtonsView buttons by @guiyanakuang in [#1652](https://github.com/ClipFlow/clipflow-desktop/pull/1652)
 
 ## Dependencies
-* ⬆️ Bump org.jmdns:jmdns from 3.5.9 to 3.5.11 by @dependabot in [#1636](https://github.com/CrossPaste/crosspaste-desktop/pull/1636)
-* ⬆️ Bump kotlin from 2.0.0 to 2.0.10 by @dependabot in [#1634](https://github.com/CrossPaste/crosspaste-desktop/pull/1634)
+* ⬆️ Bump org.jmdns:jmdns from 3.5.9 to 3.5.11 by @dependabot in [#1636](https://github.com/ClipFlow/clipflow-desktop/pull/1636)
+* ⬆️ Bump kotlin from 2.0.0 to 2.0.10 by @dependabot in [#1634](https://github.com/ClipFlow/clipflow-desktop/pull/1634)
 
 ## Refactoring and Code Quality
-* ♻️ Abstract SettingItemView component by @guiyanakuang in [#1653](https://github.com/CrossPaste/crosspaste-desktop/pull/1653)
-* ✅ Rename test classes to follow naming conventions by @guiyanakuang in [#1659](https://github.com/CrossPaste/crosspaste-desktop/pull/1659)
-* 🔨 Decouple dependency injection from koinApplication by @guiyanakuang in [#1661](https://github.com/CrossPaste/crosspaste-desktop/pull/1661)
+* ♻️ Abstract SettingItemView component by @guiyanakuang in [#1653](https://github.com/ClipFlow/clipflow-desktop/pull/1653)
+* ✅ Rename test classes to follow naming conventions by @guiyanakuang in [#1659](https://github.com/ClipFlow/clipflow-desktop/pull/1659)
+* 🔨 Decouple dependency injection from koinApplication by @guiyanakuang in [#1661](https://github.com/ClipFlow/clipflow-desktop/pull/1661)
 
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/1.0.5.838...1.0.6.862
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/1.0.5.838...1.0.6.862
 
 
 # [1.0.5] - 2024-08-05
 
 ### Bug Fixes
-* 🐛 [Microsoft Store] Fix bug preventing control over startup settings for apps installed from Microsoft Store by @guiyanakuang in [#1604](https://github.com/CrossPaste/crosspaste-desktop/pull/1604)
-* 🐛 [Microsoft Store] Fix logic error in determining if the application was installed from the Microsoft Store by @guiyanakuang in [#1610](https://github.com/CrossPaste/crosspaste-desktop/pull/1610)
-* 🐛 [Mac] Fix memory leak issue in MacosApi by @guiyanakuang in [#1619](https://github.com/CrossPaste/crosspaste-desktop/pull/1619)
-* 🐛 [Linux] Fix clipboard detection and memory leak in pasteboard service by @guiyanakuang in [#1621](https://github.com/CrossPaste/crosspaste-desktop/pull/1621)
+* 🐛 [Microsoft Store] Fix bug preventing control over startup settings for apps installed from Microsoft Store by @guiyanakuang in [#1604](https://github.com/ClipFlow/clipflow-desktop/pull/1604)
+* 🐛 [Microsoft Store] Fix logic error in determining if the application was installed from the Microsoft Store by @guiyanakuang in [#1610](https://github.com/ClipFlow/clipflow-desktop/pull/1610)
+* 🐛 [Mac] Fix memory leak issue in MacosApi by @guiyanakuang in [#1619](https://github.com/ClipFlow/clipflow-desktop/pull/1619)
+* 🐛 [Linux] Fix clipboard detection and memory leak in pasteboard service by @guiyanakuang in [#1621](https://github.com/ClipFlow/clipflow-desktop/pull/1621)
 
 ### New Features
-* ⚡ Get current app's tray icon position using Mac API by @guiyanakuang in [#1612](https://github.com/CrossPaste/crosspaste-desktop/pull/1612)
+* ⚡ Get current app's tray icon position using Mac API by @guiyanakuang in [#1612](https://github.com/ClipFlow/clipflow-desktop/pull/1612)
 
 ### Improvements
-* 👷 Calculate checksum for the built release files by @guiyanakuang in [#1602](https://github.com/CrossPaste/crosspaste-desktop/pull/1602)
-* 👷 Improve Gradle task for Swift compilation by @guiyanakuang in [#1614](https://github.com/CrossPaste/crosspaste-desktop/pull/1614)
+* 👷 Calculate checksum for the built release files by @guiyanakuang in [#1602](https://github.com/ClipFlow/clipflow-desktop/pull/1602)
+* 👷 Improve Gradle task for Swift compilation by @guiyanakuang in [#1614](https://github.com/ClipFlow/clipflow-desktop/pull/1614)
 
 ### Documents
-* 📝 Add badge to readme by @guiyanakuang in [#1608](https://github.com/CrossPaste/crosspaste-desktop/pull/1608)
-* 📝 Enhance conceptual documentation by @guiyanakuang in [#1616](https://github.com/CrossPaste/crosspaste-desktop/pull/1616)
+* 📝 Add badge to readme by @guiyanakuang in [#1608](https://github.com/ClipFlow/clipflow-desktop/pull/1608)
+* 📝 Enhance conceptual documentation by @guiyanakuang in [#1616](https://github.com/ClipFlow/clipflow-desktop/pull/1616)
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/v1.0.2...v1.0.5
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/v1.0.2...v1.0.5
 
 # [1.0.2] - 2024-08-01
 
 ### Bug Fixes
-* 🐛 On Linux, We Should Retrieve the Distribution Version Instead of the Kernel Version by @guiyanakuang in [#1548](https://github.com/CrossPaste/crosspaste-desktop/pull/1548)
-* 🐛 Fixed issue with duplicate unActive main window by @guiyanakuang in [#1575](https://github.com/CrossPaste/crosspaste-desktop/pull/1575)
-* 🐛 Fix bug in adjusting the cleanupPercentage control spinner by @guiyanakuang in [#1589](https://github.com/CrossPaste/crosspaste-desktop/pull/1589)
-* 🐛 Fix issue where right-clicking to activate the menu on Mac causes a light spot to appear in the top left corner of the desktop by @guiyanakuang in [#1593](https://github.com/CrossPaste/crosspaste-desktop/pull/1593)
-* 🐛 Fix issue where modifying one configuration resets other modified configurations to their default values by @guiyanakuang in [#1595](https://github.com/CrossPaste/crosspaste-desktop/pull/1595)
-* 🐛 Fix logic for hiding the tutorial button by @guiyanakuang in [#1598](https://github.com/CrossPaste/crosspaste-desktop/pull/1598)
-* 🐛 Fix issue where menu does not display on Mac by @guiyanakuang in [#1600](https://github.com/CrossPaste/crosspaste-desktop/pull/1600)
+* 🐛 On Linux, We Should Retrieve the Distribution Version Instead of the Kernel Version by @guiyanakuang in [#1548](https://github.com/ClipFlow/clipflow-desktop/pull/1548)
+* 🐛 Fixed issue with duplicate unActive main window by @guiyanakuang in [#1575](https://github.com/ClipFlow/clipflow-desktop/pull/1575)
+* 🐛 Fix bug in adjusting the cleanupPercentage control spinner by @guiyanakuang in [#1589](https://github.com/ClipFlow/clipflow-desktop/pull/1589)
+* 🐛 Fix issue where right-clicking to activate the menu on Mac causes a light spot to appear in the top left corner of the desktop by @guiyanakuang in [#1593](https://github.com/ClipFlow/clipflow-desktop/pull/1593)
+* 🐛 Fix issue where modifying one configuration resets other modified configurations to their default values by @guiyanakuang in [#1595](https://github.com/ClipFlow/clipflow-desktop/pull/1595)
+* 🐛 Fix logic for hiding the tutorial button by @guiyanakuang in [#1598](https://github.com/ClipFlow/clipflow-desktop/pull/1598)
+* 🐛 Fix issue where menu does not display on Mac by @guiyanakuang in [#1600](https://github.com/ClipFlow/clipflow-desktop/pull/1600)
 
 ### New Features
-* 💄 First time user guide by @guiyanakuang in [#1596](https://github.com/CrossPaste/crosspaste-desktop/pull/1596)
-* ✨ Support for identifying whether the installation source is from the microsoft store by @guiyanakuang in [#1554](https://github.com/CrossPaste/crosspaste-desktop/pull/1554)
-* ✨ Choose between toast and system notification based on the main UI by @guiyanakuang in [#1560](https://github.com/CrossPaste/crosspaste-desktop/pull/1560)
-* ✨ Implement linux notifications using JNA and libnotify by @guiyanakuang in [#1562](https://github.com/CrossPaste/crosspaste-desktop/pull/1562)
-* ✨ Support search based on pasteboard source by @guiyanakuang in [#1585](https://github.com/CrossPaste/crosspaste-desktop/pull/1585)
+* 💄 First time user guide by @guiyanakuang in [#1596](https://github.com/ClipFlow/clipflow-desktop/pull/1596)
+* ✨ Support for identifying whether the installation source is from the microsoft store by @guiyanakuang in [#1554](https://github.com/ClipFlow/clipflow-desktop/pull/1554)
+* ✨ Choose between toast and system notification based on the main UI by @guiyanakuang in [#1560](https://github.com/ClipFlow/clipflow-desktop/pull/1560)
+* ✨ Implement linux notifications using JNA and libnotify by @guiyanakuang in [#1562](https://github.com/ClipFlow/clipflow-desktop/pull/1562)
+* ✨ Support search based on pasteboard source by @guiyanakuang in [#1585](https://github.com/ClipFlow/clipflow-desktop/pull/1585)
 
 ### Improvements
-* 💄 Providing i18n for search placeholder by @guiyanakuang in [#1552](https://github.com/CrossPaste/crosspaste-desktop/pull/1552)
-* 🔨 Remove Notification References from commonMain by @guiyanakuang in [#1558](https://github.com/CrossPaste/crosspaste-desktop/pull/1558)
-* 🔨 Modify the implementation to check the availability of the new version by @guiyanakuang in [#1564](https://github.com/CrossPaste/crosspaste-desktop/pull/1564)
-* 💄 Prompt the user through the UI when a new version is available by @guiyanakuang in [#1566](https://github.com/CrossPaste/crosspaste-desktop/pull/1566)
-* 💄 Unified system and desktop icons for Windows and Linux by @guiyanakuang in [#1568](https://github.com/CrossPaste/crosspaste-desktop/pull/1568)
-* 💄 Applied theme color to default icons by @guiyanakuang in [#1571](https://github.com/CrossPaste/crosspaste-desktop/pull/1571)
-* 🔨 Extracted redirect URLs into configuration by @guiyanakuang in [#1573](https://github.com/CrossPaste/crosspaste-desktop/pull/1573)
-* 💄 Adjusted pasteboard menu and tooltip positions by @guiyanakuang in [#1577](https://github.com/CrossPaste/crosspaste-desktop/pull/1577)
-* 💄 Added tooltip to show source and type when hovering over pasteboard icon by @guiyanakuang in [#1579](https://github.com/CrossPaste/crosspaste-desktop/pull/1579)
-* ♻️ Rename Html type to Html Rich Text by @guiyanakuang in [#1587](https://github.com/CrossPaste/crosspaste-desktop/pull/1587)
-* 💄 Optimize the UI of the spinner control by @guiyanakuang in [#1591](https://github.com/CrossPaste/crosspaste-desktop/pull/1591)
+* 💄 Providing i18n for search placeholder by @guiyanakuang in [#1552](https://github.com/ClipFlow/clipflow-desktop/pull/1552)
+* 🔨 Remove Notification References from commonMain by @guiyanakuang in [#1558](https://github.com/ClipFlow/clipflow-desktop/pull/1558)
+* 🔨 Modify the implementation to check the availability of the new version by @guiyanakuang in [#1564](https://github.com/ClipFlow/clipflow-desktop/pull/1564)
+* 💄 Prompt the user through the UI when a new version is available by @guiyanakuang in [#1566](https://github.com/ClipFlow/clipflow-desktop/pull/1566)
+* 💄 Unified system and desktop icons for Windows and Linux by @guiyanakuang in [#1568](https://github.com/ClipFlow/clipflow-desktop/pull/1568)
+* 💄 Applied theme color to default icons by @guiyanakuang in [#1571](https://github.com/ClipFlow/clipflow-desktop/pull/1571)
+* 🔨 Extracted redirect URLs into configuration by @guiyanakuang in [#1573](https://github.com/ClipFlow/clipflow-desktop/pull/1573)
+* 💄 Adjusted pasteboard menu and tooltip positions by @guiyanakuang in [#1577](https://github.com/ClipFlow/clipflow-desktop/pull/1577)
+* 💄 Added tooltip to show source and type when hovering over pasteboard icon by @guiyanakuang in [#1579](https://github.com/ClipFlow/clipflow-desktop/pull/1579)
+* ♻️ Rename Html type to Html Rich Text by @guiyanakuang in [#1587](https://github.com/ClipFlow/clipflow-desktop/pull/1587)
+* 💄 Optimize the UI of the spinner control by @guiyanakuang in [#1591](https://github.com/ClipFlow/clipflow-desktop/pull/1591)
 
 
 ### Dependency Upgrades
-* ⬆️ Bump org.signal:libsignal-client from 0.52.5 to 0.54.0 by @dependabot in [#1570](https://github.com/CrossPaste/crosspaste-desktop/pull/1570)
+* ⬆️ Bump org.signal:libsignal-client from 0.52.5 to 0.54.0 by @dependabot in [#1570](https://github.com/ClipFlow/clipflow-desktop/pull/1570)
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/v1.0.1...v1.0.2
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/v1.0.1...v1.0.2
 
 # [1.0.1] - 2024-07-24
 
 ### Bug Fixes
-* :bug: Fix the issue in build-release.yml where the Alibaba Cloud OSS version path was not set correctly by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1491
-* :bug: Fix the issue where the transparent background did not adapt to the theme by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1493
-* :bug: Fix the issue that FaviconLoader does not support concurrent loading by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1497
-* :bug: Fix the issue of failing to retrieve the paste shortcut key by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1502
-* :bug: Fix the bug of getting the wrong resolution of images by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1517
-* :bug: Fix incorrect image annotation icon by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1519
-* :bug: Avoid adding file type icons to the pasteboard by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1523
-* :bug: Avoid writing to the clipboard on the main thread by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1525
+* :bug: Fix the issue in build-release.yml where the Alibaba Cloud OSS version path was not set correctly by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1491
+* :bug: Fix the issue where the transparent background did not adapt to the theme by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1493
+* :bug: Fix the issue that FaviconLoader does not support concurrent loading by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1497
+* :bug: Fix the issue of failing to retrieve the paste shortcut key by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1502
+* :bug: Fix the bug of getting the wrong resolution of images by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1517
+* :bug: Fix incorrect image annotation icon by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1519
+* :bug: Avoid adding file type icons to the pasteboard by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1523
+* :bug: Avoid writing to the clipboard on the main thread by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1525
 
 ### New Features
-* :sparkles: Implement Thumbnail Loader by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1509
-* :lipstick: get the icon for the current file type by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1500
+* :sparkles: Implement Thumbnail Loader by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1509
+* :lipstick: get the icon for the current file type by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1500
 
 ### Improvements
-* :heavy_plus_sign: Add imageio-core / imageio-jpeg for accelerated image loading by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1529
-* :hammer: Refactoring ConcurrentLoader and adding UT by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1499
-* :hammer: Refactor image loading implementation for better clarity, easier understanding, and improved extensibility by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1511
-* :lipstick: Use CircularProgressIndicator as the image loading screen by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1513
-* :lipstick: Modifying cursor state when copying pasteboards by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1527
-* :lipstick: Avoid that the background of the pasteboard menu affects the recognition of the icons by @guiyanakuang in https://github.com/CrossPaste/crosspaste-desktop/pull/1506
+* :heavy_plus_sign: Add imageio-core / imageio-jpeg for accelerated image loading by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1529
+* :hammer: Refactoring ConcurrentLoader and adding UT by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1499
+* :hammer: Refactor image loading implementation for better clarity, easier understanding, and improved extensibility by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1511
+* :lipstick: Use CircularProgressIndicator as the image loading screen by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1513
+* :lipstick: Modifying cursor state when copying pasteboards by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1527
+* :lipstick: Avoid that the background of the pasteboard menu affects the recognition of the icons by @guiyanakuang in https://github.com/ClipFlow/clipflow-desktop/pull/1506
 
 ### Dependency Upgrades
-* ⬆️ Bump selenium from 4.22.0 to 4.23.0 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1514
-* ⬆️ Bump io.mockk:mockk from 1.13.11 to 1.13.12 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1516
-* ⬆️ Bump org.signal:libsignal-client from 0.52.2 to 0.52.5 by @dependabot in https://github.com/CrossPaste/crosspaste-desktop/pull/1515
+* ⬆️ Bump selenium from 4.22.0 to 4.23.0 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1514
+* ⬆️ Bump io.mockk:mockk from 1.13.11 to 1.13.12 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1516
+* ⬆️ Bump org.signal:libsignal-client from 0.52.2 to 0.52.5 by @dependabot in https://github.com/ClipFlow/clipflow-desktop/pull/1515
 
 
-**Full Changelog**: https://github.com/CrossPaste/crosspaste-desktop/compare/v1.0.0...v1.0.1
+**Full Changelog**: https://github.com/ClipFlow/clipflow-desktop/compare/v1.0.0...v1.0.1
 
 # [1.0.0] - 2024-07-12
 
 ### Release Notes
-CrossPaste is a cross-platform pasteboard synchronization tool that supports macOS, Windows, and Linux. This tool provides seamless pasteboard sharing between different devices and operating systems, ensuring immediate data updates and consistency. Since the inception of the project, we have made over 700 commits, dedicated to creating a secure, efficient, and user-friendly pasteboard tool.
+ClipFlow is a cross-platform pasteboard synchronization tool that supports macOS, Windows, and Linux. This tool provides seamless pasteboard sharing between different devices and operating systems, ensuring immediate data updates and consistency. Since the inception of the project, we have made over 700 commits, dedicated to creating a secure, efficient, and user-friendly pasteboard tool.
 
 ### Core Features
 - **🖥️ Multi-OS Support**: Seamless operation across Mac, Windows, and Linux — for a truly universal pasteboard.

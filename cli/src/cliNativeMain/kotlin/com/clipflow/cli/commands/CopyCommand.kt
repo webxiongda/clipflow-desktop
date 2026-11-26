@@ -1,0 +1,86 @@
+package com.clipflow.cli.commands
+
+import com.clipflow.cli.CliContext
+import com.clipflow.cli.platform.StdinException
+import com.clipflow.cli.platform.readAllStdin
+import com.github.ajalt.clikt.core.CliktCommand
+import com.github.ajalt.clikt.core.Context
+import com.github.ajalt.clikt.core.ProgramResult
+import com.github.ajalt.clikt.core.findObject
+import com.github.ajalt.clikt.core.terminal
+import com.github.ajalt.clikt.parameters.arguments.argument
+import com.github.ajalt.clikt.parameters.arguments.optional
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class CopyRequest(
+    val text: String,
+)
+
+@Serializable
+data class CopyResponse(
+    val id: Long,
+)
+
+class CopyCommand(
+    /** Injectable so tests never touch the process's real stdin. */
+    private val stdinReader: () -> String = ::readAllStdin,
+) : CliktCommand(name = "copy") {
+
+    override fun help(context: Context): String =
+        "Copy text via ClipFlow: stores it in history and syncs it to your devices (reads stdin when piped)"
+
+    // findObject instead of requireObject: tests run this command standalone
+    private val ctx: CliContext? by findObject()
+
+    private val text by argument(help = "Text to copy (omit to read piped stdin, e.g. `git log | clipflow copy`)")
+        .optional()
+
+    override fun run() {
+        val content = text ?: readPipedStdin()
+        copyToClipFlow(content, jsonOutput = ctx?.json == true)
+    }
+
+    private fun readPipedStdin(): String {
+        if (terminal.terminalInfo.inputInteractive) {
+            throw usageError("provide text as an argument, or pipe it via stdin")
+        }
+        return readPipedStdinOrFail(stdinReader)
+    }
+}
+
+/**
+ * Reads all of piped stdin, mapping read failures to exit code 1 and empty
+ * input to a usage error. Shared between `copy` and the root command's
+ * implicit copy; callers must have checked that stdin is not interactive.
+ */
+internal fun CliktCommand.readPipedStdinOrFail(stdinReader: () -> String): String {
+    val content =
+        try {
+            stdinReader()
+        } catch (e: StdinException) {
+            echo("Error: ${e.message}", err = true)
+            throw ProgramResult(1)
+        }
+    if (content.isEmpty()) {
+        throw usageError("stdin was empty; nothing to copy")
+    }
+    return content
+}
+
+internal fun CliktCommand.copyToClipFlow(
+    content: String,
+    jsonOutput: Boolean,
+) {
+    runCli { client ->
+        val body = cliJson.encodeToString(CopyRequest.serializer(), CopyRequest(content))
+        val response = client.postBody("/cli/copy", body, CopyResponse.serializer())
+        if (jsonOutput) {
+            echo(cliJson.encodeToString(CopyResponse.serializer(), response))
+        } else {
+            // "to ClipFlow", not "to clipboard": a headless daemon has no
+            // system clipboard — the paste is stored in history and synced
+            echo("Copied to ClipFlow (id=${response.id}).")
+        }
+    }
+}

@@ -6,7 +6,7 @@ import { BlobStore } from "@/shared/storage/blob-store";
 import { PasteStore } from "@/shared/storage/paste-store";
 import { ingestPaste } from "@/shared/paste/paste-ingestion";
 import { writeRemotePasteToClipboard } from "@/shared/clipboard/clipboard-sync-writer";
-import { CrossPasteHash } from "@/shared/core";
+import { ClipFlowHash } from "@/shared/core";
 import { shouldWriteRemotePaste } from "./paste-push-policy";
 
 /** Payload of a FILE_PULL_REQUEST message (matches Kotlin WsPullFileRequest sealed class). */
@@ -69,7 +69,7 @@ export function isValidWholeFilePayload(
     return false;
   }
   const bytes = new Int8Array(payload.buffer, payload.byteOffset, payload.byteLength);
-  return CrossPasteHash.hashBytes(bytes) === metadata.hash;
+  return ClipFlowHash.hashBytes(bytes) === metadata.hash;
 }
 
 /** Payload of a PASTE_REJECTED_OVERSIZE message (matches Kotlin OversizePasteNotice). */

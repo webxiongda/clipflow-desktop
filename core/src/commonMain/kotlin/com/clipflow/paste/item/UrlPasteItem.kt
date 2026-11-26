@@ -1,0 +1,67 @@
+package com.clipflow.paste.item
+
+import com.clipflow.paste.PasteType
+import com.clipflow.paste.item.CreatePasteItemHelper.createUrlPasteItem
+import com.clipflow.paste.item.PasteItem.Companion.getExtraInfoFromJson
+import com.clipflow.paste.item.PasteItem.Companion.parseStoredIdentifiers
+import com.clipflow.paste.item.PasteItemProperties.TITLE
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
+
+@Serializable
+@SerialName("url")
+class UrlPasteItem(
+    override val identifiers: List<String>,
+    override val hash: String,
+    override val size: Long,
+    override val url: String,
+    override val extraInfo: JsonObject? = null,
+) : PasteItem,
+    PasteUrl {
+
+    companion object {
+        const val OPEN_GRAPH_IMAGE = "openGraphImage.png"
+    }
+
+    constructor(jsonObject: JsonObject) : this(
+        identifiers = parseStoredIdentifiers(jsonObject["identifiers"]!!.jsonPrimitive.content),
+        hash = jsonObject["hash"]!!.jsonPrimitive.content,
+        size = jsonObject["size"]!!.jsonPrimitive.long,
+        url = jsonObject["url"]!!.jsonPrimitive.content,
+        extraInfo = getExtraInfoFromJson(jsonObject),
+    )
+
+    override fun getPasteType(): PasteType = PasteType.URL_TYPE
+
+    override fun copy(extraInfo: JsonObject?): UrlPasteItem =
+        createUrlPasteItem(
+            identifiers = identifiers,
+            url = url,
+            extraInfo = extraInfo,
+        )
+
+    override fun getTitle(): String? =
+        extraInfo?.let {
+            it[TITLE]?.jsonPrimitive?.content
+        }
+
+    override fun isValid(): Boolean =
+        hash.isNotEmpty() &&
+            size > 0 &&
+            url.isNotEmpty()
+
+    override fun toStoredJson(): String =
+        buildJsonObject {
+            put("type", getPasteType().type)
+            put("identifiers", identifiers.joinToString(","))
+            put("hash", hash)
+            put("size", size)
+            put("url", url)
+            extraInfo?.let { put("extraInfo", it) }
+        }.toString()
+}

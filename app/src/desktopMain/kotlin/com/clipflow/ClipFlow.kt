@@ -1,0 +1,683 @@
+package com.clipflow
+
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.window.application
+import androidx.navigation.compose.rememberNavController
+import com.clipflow.app.AppExitService
+import com.clipflow.app.AppFileType
+import com.clipflow.app.AppLaunchState
+import com.clipflow.app.AppLock
+import com.clipflow.app.AppName
+import com.clipflow.app.AppStartUpService
+import com.clipflow.app.AppUpdateService
+import com.clipflow.app.DesktopAppSize
+import com.clipflow.app.DesktopAppWindowManager
+import com.clipflow.app.DesktopPidFileService
+import com.clipflow.app.ExitMode
+import com.clipflow.app.NativeMessagingHostService
+import com.clipflow.bootstrap.DesktopBootstrap
+import com.clipflow.bootstrap.StartupFailure
+import com.clipflow.clean.CleanScheduler
+import com.clipflow.cli.CliServer
+import com.clipflow.cli.CliSymlinkService
+import com.clipflow.config.AppMetadataRepository
+import com.clipflow.config.DesktopConfigManager
+import com.clipflow.db.DriverFactory
+import com.clipflow.image.installClipFlowSourceIcon
+import com.clipflow.listener.GlobalListener
+import com.clipflow.log.DesktopClipFlowLogger
+import com.clipflow.mcp.McpServer
+import com.clipflow.net.PasteBonjourService
+import com.clipflow.net.PasteClient
+import com.clipflow.net.ResourcesClient
+import com.clipflow.net.Server
+import com.clipflow.notification.NotificationManager
+import com.clipflow.paste.GuidePasteDataService
+import com.clipflow.paste.PasteReleaseService
+import com.clipflow.paste.PasteboardService
+import com.clipflow.path.DesktopAppPathProvider
+import com.clipflow.path.UserDataPathProvider
+import com.clipflow.plugin.BundledPluginInstaller
+import com.clipflow.plugin.PluginRepository
+import com.clipflow.presist.FilePersist
+import com.clipflow.rendering.RenderingService
+import com.clipflow.sync.PastePullService
+import com.clipflow.sync.PastePullTrigger
+import com.clipflow.sync.QRCodeGenerator
+import com.clipflow.sync.SyncManager
+import com.clipflow.task.TaskExecutor
+import com.clipflow.ui.ClipFlowWindows
+import com.clipflow.ui.LocalAppSizeValueState
+import com.clipflow.ui.LocalDesktopAppSizeValueState
+import com.clipflow.ui.LocalExitApplication
+import com.clipflow.ui.LocalNavHostController
+import com.clipflow.ui.theme.DesktopTheme
+import com.clipflow.utils.DesktopDeviceUtils
+import com.clipflow.utils.DesktopLocaleUtils
+import com.clipflow.utils.GlobalCoroutineScope.ioCoroutineDispatcher
+import com.clipflow.utils.getAppEnvUtils
+import com.clipflow.utils.getPlatformUtils
+import com.clipflow.utils.ioDispatcher
+import io.github.oshai.kotlinlogging.KLogger
+import io.github.oshai.kotlinlogging.KotlinLogging
+import io.github.vinceglb.filekit.FileKit
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeoutOrNull
+import org.jetbrains.skiko.SkikoProperties
+import org.koin.compose.koinInject
+import org.koin.core.KoinApplication
+import org.koin.core.qualifier.Qualifier
+import org.koin.core.qualifier.named
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.seconds
+
+class ClipFlow {
+
+    companion object {
+
+        private val appEnvUtils = getAppEnvUtils()
+
+        private val appEnv = appEnvUtils.getCurrentAppEnv()
+
+        private val platform = getPlatformUtils().platform
+
+        private val deviceUtils = DesktopDeviceUtils(platform)
+
+        private val localeUtils = DesktopLocaleUtils
+
+        // Set by bootstrap(), the first thing main() does.
+        private lateinit var appPathProvider: DesktopAppPathProvider
+
+        private lateinit var appMetadataRepository: AppMetadataRepository
+
+        private lateinit var configManager: DesktopConfigManager
+
+        private lateinit var clipFlowLogger: DesktopClipFlowLogger
+
+        private lateinit var logger: KLogger
+
+        var headless: Boolean = false
+            private set
+
+        private lateinit var module: DesktopModule
+
+        lateinit var koinApplication: KoinApplication
+            private set
+
+        private enum class ManagedService {
+            APP_UPDATE,
+            CLEAN_SCHEDULER,
+            CLI_SERVER,
+            DRIVER_FACTORY,
+            GLOBAL_LISTENER,
+            MCP_SERVER,
+            PASTE_PULL_TRIGGER,
+            PASTE_CLIENT,
+            PASTE_SERVER,
+            PASTEBOARD,
+            PASTE_BONJOUR,
+            RENDERING,
+            RESOURCES_CLIENT,
+            SYNC_MANAGER,
+            TASK_EXECUTOR,
+            USER_DATA_PATH,
+            WINDOW_MANAGER,
+        }
+
+        /** Services are registered when startup first resolves them. Shutdown must
+         * never use Koin to create a service that was not part of this lifecycle. */
+        private val managedServices = ConcurrentHashMap<ManagedService, Any>()
+
+        private fun initModule() {
+            module =
+                DesktopModule(
+                    appEnv,
+                    appMetadataRepository,
+                    appPathProvider,
+                    configManager,
+                    clipFlowLogger,
+                    deviceUtils,
+                    logger,
+                    platform,
+                    headless,
+                )
+            koinApplication = module.initKoinApplication()
+        }
+
+        @Throws(Exception::class)
+        private suspend fun startApplication() {
+            runCatching {
+                if (appEnvUtils.isProduction()) {
+                    System.setProperty("jna.library.path", appPathProvider.pasteAppExePath.toString())
+                }
+                if (!headless) {
+                    // Initialize AWT Toolkit to prevent potential deadlock issues
+                    java.awt.Toolkit.getDefaultToolkit()
+                }
+
+                val koin = koinApplication.koin
+                val appLaunchState = koin.get<AppLaunchState>()
+                if (appLaunchState.acquiredLock) {
+                    if (headless) {
+                        // Register as soon as the single-instance lock is held (and
+                        // never earlier: a second instance must not run this hook and
+                        // delete the running daemon's files): from here on SIGTERM and
+                        // the startup-failure exitProcess(1) run the same shutdown
+                        // chain even while services are still starting.
+                        registerHeadlessShutdownHook()
+                    }
+                    getManagedService<UserDataPathProvider>(ManagedService.USER_DATA_PATH)
+                    getManagedService<DriverFactory>(ManagedService.DRIVER_FACTORY)
+                    getManagedService<ResourcesClient>(ManagedService.RESOURCES_CLIENT)
+                    val configManager = koin.get<DesktopConfigManager>()
+                    val notificationManager = koin.get<NotificationManager>()
+                    configManager.notificationManager = notificationManager
+                    // Register runtime-toggleable services even when initially
+                    // disabled. Settings can start these Koin singletons later,
+                    // and shutdown must still perform their ordered cleanup.
+                    val pasteboardService =
+                        getManagedService<PasteboardService>(ManagedService.PASTEBOARD)
+                    if (configManager.getCurrentConfig().enablePasteboardListening) {
+                        pasteboardService.start()
+                    }
+                    koin.get<QRCodeGenerator>()
+                    // Before the sync server can start a receive of this run, and before
+                    // the pull cursors are rebuilt from the rows that remain
+                    koin.get<PasteReleaseService>().discardInterruptedReceives()
+                    getManagedService<SyncManager>(ManagedService.SYNC_MANAGER).start()
+                    koin.get<PastePullService>().init()
+                    getManagedService<PastePullTrigger>(ManagedService.PASTE_PULL_TRIGGER).start()
+                    val pasteServer = getManagedService<Server>(ManagedService.PASTE_SERVER)
+                    if (headless) {
+                        // A daemon without its sync endpoint is not operational.
+                        pasteServer.start()
+                    } else {
+                        // Preserve the desktop app's degraded mode: local pasteboard
+                        // management remains usable when the sync endpoint cannot bind.
+                        runCatching { pasteServer.start() }
+                            .onFailure { e -> logger.warn(e) { "Sync server unavailable for this session" } }
+                    }
+                    if (headless) {
+                        // The UDS CLI API is the daemon's only control plane, so a
+                        // CliServer startup failure is a daemon startup failure
+                        // (fail-closed, propagates to the headless exit-1 path).
+                        getManagedService<CliServer>(ManagedService.CLI_SERVER).start()
+                    } else {
+                        // The GUI tolerates a degraded CLI and keeps running.
+                        startOptionalServiceInBackground("CLI") {
+                            getManagedService<CliServer>(ManagedService.CLI_SERVER).start()
+                        }
+                    }
+                    val mcpServer = getManagedService<McpServer>(ManagedService.MCP_SERVER)
+                    if (configManager.getCurrentConfig().enableMcpServer) {
+                        startOptionalServiceInBackground("MCP server") { mcpServer.start() }
+                    }
+                    getManagedService<PasteClient>(ManagedService.PASTE_CLIENT)
+                    getManagedService<PasteBonjourService>(ManagedService.PASTE_BONJOUR)
+                    val cleanScheduler =
+                        getManagedService<CleanScheduler>(ManagedService.CLEAN_SCHEDULER)
+                    // CleanScheduler resolves TaskExecutor as a dependency. Record the
+                    // existing singleton so its worker scope is closed on shutdown.
+                    getManagedService<TaskExecutor>(ManagedService.TASK_EXECUTOR)
+                    cleanScheduler.start()
+                    koin.get<DesktopPidFileService>().start()
+
+                    if (!headless) {
+                        // These only serve an interactive desktop session: OS login-item
+                        // autostart would relaunch the GUI app on login, native-messaging
+                        // manifests target local browsers, guide pastes are onboarding
+                        // content, the CLI symlink probe drives the install prompt and
+                        // the extension-page entry, and the update service drives the
+                        // in-app update UI (its DesktopAppUpdateService implementation
+                        // requires the GUI-only DesktopAppWindowManager binding; server
+                        // updates are an OS package-manager concern).
+                        // Register the window manager before AppUpdateService resolves it
+                        // as a dependency, so partial GUI startup can still stop it.
+                        val appWindowManager =
+                            getManagedService<DesktopAppWindowManager>(ManagedService.WINDOW_MANAGER)
+                        getManagedService<AppUpdateService>(ManagedService.APP_UPDATE).start()
+                        koin.get<AppStartUpService>().followConfig()
+                        koin.get<NativeMessagingHostService>().register()
+                        koin.get<GuidePasteDataService>().initData()
+                        ioCoroutineDispatcher.launch { koin.get<CliSymlinkService>().refresh() }
+                        ioCoroutineDispatcher.launch {
+                            installClipFlowSourceIcon(koin.get(), koin.get())
+                        }
+                        ioCoroutineDispatcher.launch {
+                            koin.get<BundledPluginInstaller>().install()
+                            koin.get<PluginRepository>().reload()
+                        }
+
+                        appWindowManager.startWindowService()
+                        FileKit.init(appId = AppName)
+                    }
+
+                    ioCoroutineDispatcher.launch {
+                        val jobs =
+                            listOf(
+                                async(ioDispatcher) {
+                                    getManagedService<RenderingService<String>>(
+                                        service = ManagedService.RENDERING,
+                                        qualifier = named("urlRendering"),
+                                    ).start()
+                                },
+                            )
+
+                        jobs.awaitAll()
+                    }
+                } else {
+                    // The GUI second instance keeps its historic silent exit(0); a
+                    // headless daemon must fail loudly with a non-zero code so that
+                    // service managers (systemd) and scripts can detect the conflict.
+                    if (headless) {
+                        val runningPid = readRunningPid()?.let { " (pid $it)" }.orEmpty()
+                        System.err.println(
+                            "Error: another ClipFlow instance is already running$runningPid. " +
+                                "Only one ClipFlow process (desktop app or headless daemon) can run per user.",
+                        )
+                        exitProcess(1)
+                    }
+                    exitProcess(0)
+                }
+            }.onFailure { e ->
+                logger.error(e) { "cant start clipflow" }
+                if (headless) {
+                    // exitProcess(1) triggers the headless shutdown hook (registered
+                    // once the lock was acquired), which runs the full cleanup chain;
+                    // before lock acquisition there is nothing to clean up.
+                    System.err.println("Error: ClipFlow failed to start in headless mode: ${e.message}")
+                    exitProcess(1)
+                }
+                StartupFailure.exit(e, startupFailureLogDir(), headless = false)
+            }
+        }
+
+        /**
+         * Starts a service the GUI can live without. A failure is logged and the
+         * session continues in degraded mode.
+         */
+        private fun startOptionalServiceInBackground(
+            serviceName: String,
+            start: suspend () -> Unit,
+        ) {
+            ioCoroutineDispatcher.launch {
+                runCatching { start() }
+                    .onFailure { e -> logger.warn(e) { "$serviceName unavailable for this session" } }
+            }
+        }
+
+        private fun readRunningPid(): String? =
+            runCatching {
+                koinApplication.koin
+                    .get<DesktopPidFileService>()
+                    .pidFilePath
+                    .toFile()
+                    .readText()
+                    .trim()
+                    .takeIf { it.isNotEmpty() }
+            }.getOrNull()
+
+        private suspend fun exitClipFlowApplication(
+            exitMode: ExitMode,
+            exitApplication: () -> Unit,
+        ) {
+            val koin = koinApplication.koin
+            val appExitService = koin.get<AppExitService>()
+            appExitService.beforeExitList.forEach {
+                it.invoke()
+            }
+
+            shutdownAllServices()
+
+            appExitService.beforeReleaseLockList.forEach { it.invoke() }
+            logger.info { "beforeReleaseLockList execution completed" }
+            koin.get<AppLock>().releaseLock()
+            logger.info { "AppLock release completed" }
+            if (!headless && exitMode == ExitMode.MIGRATION) {
+                val appWindowManager = koin.get<DesktopAppWindowManager>()
+                appWindowManager.hideMainWindow()
+            }
+            exitApplication()
+        }
+
+        private suspend fun shutdownAllServices() {
+            withTimeoutOrNull(5.seconds) {
+                supervisorScope {
+                    val jobs =
+                        buildList {
+                            add(
+                                async {
+                                    stopManagedService<TaskExecutor>(
+                                        ManagedService.TASK_EXECUTOR,
+                                        "TaskExecutor",
+                                    ) { it.shutdown() }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<RenderingService<String>>(
+                                        service = ManagedService.RENDERING,
+                                        serviceName = "RenderingService",
+                                    ) { it.stop() }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<PasteboardService>(
+                                        ManagedService.PASTEBOARD,
+                                        "PasteboardService",
+                                    ) { it.shutdown() }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<PasteBonjourService>(
+                                        ManagedService.PASTE_BONJOUR,
+                                        "PasteBonjourService",
+                                    ) { it.close() }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<Server>(ManagedService.PASTE_SERVER, "PasteServer") {
+                                        it.stop()
+                                    }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<CliServer>(ManagedService.CLI_SERVER, "CliServer") {
+                                        it.stop()
+                                    }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<McpServer>(ManagedService.MCP_SERVER, "McpServer") {
+                                        it.stop()
+                                    }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<PastePullTrigger>(
+                                        ManagedService.PASTE_PULL_TRIGGER,
+                                        "PastePullTrigger",
+                                    ) { it.stop() }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<SyncManager>(ManagedService.SYNC_MANAGER, "SyncManager") {
+                                        it.stop()
+                                    }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<CleanScheduler>(
+                                        ManagedService.CLEAN_SCHEDULER,
+                                        "CleanPasteScheduler",
+                                    ) { it.stop() }
+                                },
+                            )
+                            if (!headless) {
+                                add(
+                                    async {
+                                        stopManagedService<AppUpdateService>(
+                                            ManagedService.APP_UPDATE,
+                                            "AppUpdateService",
+                                        ) { it.stop() }
+                                    },
+                                )
+                                add(
+                                    async {
+                                        stopManagedService<DesktopAppWindowManager>(
+                                            ManagedService.WINDOW_MANAGER,
+                                            "DesktopAppWindowManager",
+                                        ) {
+                                            it.stopWindowService()
+                                        }
+                                    },
+                                )
+                                add(
+                                    async {
+                                        stopManagedService<GlobalListener>(
+                                            ManagedService.GLOBAL_LISTENER,
+                                            "GlobalListener",
+                                        ) { it.stop() }
+                                    },
+                                )
+                            }
+                            add(
+                                async {
+                                    stopManagedService<UserDataPathProvider>(
+                                        ManagedService.USER_DATA_PATH,
+                                        "UserDataPathProvider",
+                                    ) { it.cleanTemp() }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<PasteClient>(ManagedService.PASTE_CLIENT, "PasteClient") {
+                                        it.close()
+                                    }
+                                },
+                            )
+                            add(
+                                async {
+                                    stopManagedService<ResourcesClient>(
+                                        ManagedService.RESOURCES_CLIENT,
+                                        "ResourcesClient",
+                                    ) { it.close() }
+                                },
+                            )
+                        }
+
+                    jobs.awaitAll()
+                }
+            }
+
+            runCatching {
+                stopManagedService<DriverFactory>(ManagedService.DRIVER_FACTORY, "DriverFactory") {
+                    it.closeDriver()
+                }
+            }
+        }
+
+        private inline fun <reified T : Any> getManagedService(
+            service: ManagedService,
+            qualifier: Qualifier? = null,
+        ): T =
+            koinApplication.koin.get<T>(qualifier = qualifier).also { instance ->
+                managedServices[service] = instance
+            }
+
+        private fun <T : Any> manageService(
+            service: ManagedService,
+            instance: T,
+        ): T = instance.also { managedServices[service] = it }
+
+        private inline fun <reified T : Any> stopManagedService(
+            service: ManagedService,
+            serviceName: String,
+            stopAction: (T) -> Unit,
+        ) {
+            val instance = managedServices.remove(service) as? T ?: return
+            runCatching {
+                stopAction(instance)
+            }.onSuccess {
+                logger.info { "$serviceName stop completed" }
+            }.onFailure { e ->
+                logger.error(e) { "Error stopping $serviceName" }
+            }
+        }
+
+        private val headlessLatch = java.util.concurrent.CountDownLatch(1)
+
+        private val headlessShutdownStarted =
+            java.util.concurrent.atomic
+                .AtomicBoolean(false)
+
+        /**
+         * The daemon counterpart of [exitClipFlowApplication]: runs the exit
+         * hooks around [shutdownAllServices] and releases the lock. Idempotent,
+         * and each step is guarded, so the SIGTERM hook and the startup-failure
+         * path cannot double-clean and one failing step cannot skip the rest.
+         */
+        private fun headlessShutdown() {
+            if (!headlessShutdownStarted.compareAndSet(false, true)) {
+                return
+            }
+            val koin = koinApplication.koin
+            val appExitService = runCatching { koin.get<AppExitService>() }.getOrNull()
+            appExitService?.beforeExitList?.forEach { hook ->
+                runCatching { hook.invoke() }
+                    .onFailure { e -> logger.error(e) { "beforeExit hook failed" } }
+            }
+            runCatching { runBlocking { shutdownAllServices() } }
+                .onFailure { e -> logger.error(e) { "shutdownAllServices failed" } }
+            appExitService?.beforeReleaseLockList?.forEach { hook ->
+                runCatching { hook.invoke() }
+                    .onFailure { e -> logger.error(e) { "beforeReleaseLock hook failed" } }
+            }
+            runCatching { koin.get<AppLock>().releaseLock() }
+                .onFailure { e -> logger.error(e) { "releaseLock failed" } }
+        }
+
+        private fun registerHeadlessShutdownHook() {
+            Runtime.getRuntime().addShutdownHook(
+                Thread {
+                    logger.info { "Shutdown signal received" }
+                    headlessShutdown()
+                    headlessLatch.countDown()
+                },
+            )
+        }
+
+        private fun runHeadless() {
+            logger.info { "Running in headless mode" }
+            headlessLatch.await()
+        }
+
+        /**
+         * Reads the user files the file logger depends on, then starts that logger.
+         * Runs in main() rather than in this companion's init: a failure there
+         * surfaces as ExceptionInInitializerError before main() can catch it, and
+         * a packaged app then quits without a trace.
+         */
+        private fun bootstrap() {
+            appPathProvider = DesktopAppPathProvider(platform)
+            val configFilePersist =
+                FilePersist.createOneFilePersist(
+                    appPathProvider.resolve("appConfig.json", AppFileType.USER),
+                )
+            val metadataFilePersist =
+                FilePersist.createOneFilePersist(
+                    appPathProvider.resolve(".metadata", AppFileType.USER),
+                )
+            DesktopBootstrap.preClassLoad(
+                appPathProvider = appPathProvider,
+                metadataFilePersist = metadataFilePersist,
+                configFilePersist = configFilePersist,
+            )
+            appMetadataRepository = AppMetadataRepository(metadataFilePersist, deviceUtils)
+            configManager = DesktopConfigManager(configFilePersist, localeUtils)
+            clipFlowLogger =
+                DesktopClipFlowLogger(
+                    appPathProvider.resolve("clipflow.log", AppFileType.LOG).toString(),
+                    configManager,
+                )
+            logger = KotlinLogging.logger {}
+        }
+
+        /** The log dir, falling back to the default one when the path provider never came up. */
+        private fun startupFailureLogDir(): java.io.File =
+            runCatching { appPathProvider.resolve(null, AppFileType.LOG).toFile() }
+                .getOrElse {
+                    java.io.File(System.getProperty("user.home"), ".clipflow${java.io.File.separator}logs")
+                }
+
+        @OptIn(ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
+        @JvmStatic
+        fun main(args: Array<String>) {
+            try {
+                // Before anything touches AWT (incl. the headless probe below).
+                bootstrap()
+                headless = args.contains("--headless") || java.awt.GraphicsEnvironment.isHeadless()
+                DesktopBootstrap.preStart(logger)
+                initModule()
+            } catch (e: Throwable) {
+                if (::logger.isInitialized) {
+                    logger.error(e) { "ClipFlow failed to bootstrap" }
+                }
+                StartupFailure.exit(e, startupFailureLogDir(), headless = args.contains("--headless"))
+            }
+
+            logger.info { "Starting ClipFlow${if (headless) " (headless)" else ""}" }
+            runBlocking { startApplication() }
+            logger.info { "ClipFlow started" }
+
+            if (headless) {
+                runHeadless()
+            } else {
+                // Reading SkikoProperties loads skiko; keep it off the headless path.
+                logger.info { "SkikoProperties.renderApi=${SkikoProperties.renderApi}" }
+
+                application {
+                    val appWindowManager = koinInject<DesktopAppWindowManager>()
+                    val appSize = koinInject<DesktopAppSize>()
+                    val globalListener =
+                        manageService(ManagedService.GLOBAL_LISTENER, koinInject<GlobalListener>())
+
+                    val appSizeValue by appSize.appSizeValue.collectAsState()
+
+                    var exiting by remember { mutableStateOf(false) }
+
+                    val exitApplication: (ExitMode) -> Unit = { mode ->
+                        exiting = true
+                        if (mode == ExitMode.EXIT || mode == ExitMode.RESTART) {
+                            appWindowManager.hideMainWindow()
+                        }
+                        appWindowManager.hideSearchWindow()
+                        ioCoroutineDispatcher.launch {
+                            exitClipFlowApplication(mode) { exitApplication() }
+                        }
+                    }
+
+                    val navController = rememberNavController()
+
+                    LaunchedEffect(Unit) {
+                        if (!globalListener.isRegistered()) {
+                            globalListener.start()
+                        }
+                    }
+
+                    CompositionLocalProvider(
+                        LocalAppSizeValueState provides appSizeValue,
+                        LocalDesktopAppSizeValueState provides appSizeValue,
+                        LocalExitApplication provides exitApplication,
+                        LocalNavHostController provides navController,
+                    ) {
+                        DesktopTheme {
+                            ClipFlowWindows(exiting)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

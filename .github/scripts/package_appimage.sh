@@ -3,7 +3,7 @@ set -e
 
 # Build an AppImage for every Linux tarball Conveyor produced under output/.
 # Conveyor emits one tarball per Linux machine, named
-#   crosspaste-<version>-linux-<arch>.tar.gz   (arch = amd64 | aarch64)
+#   clipflow-<version>-linux-<arch>.tar.gz   (arch = amd64 | aarch64)
 # so we iterate the known arches instead of assuming a single amd64 archive.
 #
 # The build runs on an x86_64 runner: the x86_64 appimagetool can package a
@@ -26,9 +26,9 @@ build_appimage() {
     local BUILD_DIR="build/AppDir_${ARCH_TOKEN}"
 
     # Extract version from filename
-    # Example: crosspaste-1.2.4-1730-linux-amd64.tar.gz -> 1.2.4-1730
+    # Example: clipflow-1.2.4-1730-linux-amd64.tar.gz -> 1.2.4-1730
     local APP_VERSION
-    APP_VERSION=$(basename "$TAR_FILE" | sed -E "s/crosspaste-(.*)-linux-${ARCH_TOKEN}.tar.gz/\1/")
+    APP_VERSION=$(basename "$TAR_FILE" | sed -E "s/clipflow-(.*)-linux-${ARCH_TOKEN}.tar.gz/\1/")
     echo "Packaging AppImage: arch=${ARCH_TOKEN} version=${APP_VERSION} (${TAR_FILE})"
 
     # Prepare the AppDir directory
@@ -37,14 +37,14 @@ build_appimage() {
 
     echo "Extracting archive..."
     # Use --strip-components=1 to remove the top-level directory
-    # (e.g. crosspaste-1.2.4/) and extract contents directly into BUILD_DIR
+    # (e.g. clipflow-1.2.4/) and extract contents directly into BUILD_DIR
     tar -xzf "$TAR_FILE" -C "$BUILD_DIR" --strip-components=1
 
     # The CLI arrives with the tarball itself (it is an app input landing in
     # lib/app/bin/ — decision D6); just verify it is really there so a
     # packaging regression fails the build instead of silently shipping an
     # AppImage without the CLI.
-    test -x "$BUILD_DIR/lib/app/bin/crosspaste-cli"
+    test -x "$BUILD_DIR/lib/app/bin/clipflow-cli"
 
     # Configure AppImage metadata (AppRun, Desktop file, Icon) inside a subshell
     # so the working directory stays at the workspace root for appimagetool.
@@ -54,7 +54,7 @@ build_appimage() {
         # Create AppRun
         echo '#!/bin/sh
 HERE="$(dirname "$(readlink -f "${0}")")"
-exec "${HERE}/bin/crosspaste" "$@"' > AppRun
+exec "${HERE}/bin/clipflow" "$@"' > AppRun
         chmod +x AppRun
 
         # Move and fix the .desktop file
@@ -66,14 +66,14 @@ exec "${HERE}/bin/crosspaste" "$@"' > AppRun
         DESKTOP_FILENAME=$(basename "$DESKTOP_FILE")
 
         # Key points: adjust Exec and Icon
-        # Ensure Exec=crosspaste (no path)
-        # Ensure Icon=crosspaste (no file extension)
-        sed -i 's|^Exec=.*|Exec=crosspaste|g' "$DESKTOP_FILENAME"
-        sed -i 's|^Icon=.*|Icon=crosspaste|g' "$DESKTOP_FILENAME"
+        # Ensure Exec=clipflow (no path)
+        # Ensure Icon=clipflow (no file extension)
+        sed -i 's|^Exec=.*|Exec=clipflow|g' "$DESKTOP_FILENAME"
+        sed -i 's|^Icon=.*|Icon=clipflow|g' "$DESKTOP_FILENAME"
 
-        cp share/icons/hicolor/1024x1024/apps/crosspaste.png .
+        cp share/icons/hicolor/1024x1024/apps/clipflow.png .
 
-        ln -s crosspaste.png .DirIcon
+        ln -s clipflow.png .DirIcon
     )
 
     echo "Building AppImage..."
@@ -81,9 +81,9 @@ exec "${HERE}/bin/crosspaste" "$@"' > AppRun
     # --appimage-extract-and-run avoids FUSE issues in CI environments.
     ARCH="$APPIMAGE_ARCH" "$APPIMAGETOOL" --appimage-extract-and-run \
         "$BUILD_DIR" \
-        "${OUTPUT_DIR}/crosspaste-${APP_VERSION}-${ARCH_TOKEN}.AppImage"
+        "${OUTPUT_DIR}/clipflow-${APP_VERSION}-${ARCH_TOKEN}.AppImage"
 
-    echo "Success! AppImage generated at: ${OUTPUT_DIR}/crosspaste-${APP_VERSION}-${ARCH_TOKEN}.AppImage"
+    echo "Success! AppImage generated at: ${OUTPUT_DIR}/clipflow-${APP_VERSION}-${ARCH_TOKEN}.AppImage"
 }
 
 # Map Conveyor's Linux tarball suffix -> appimagetool ARCH value, as
@@ -95,13 +95,13 @@ built=0
 for PAIR in $ARCH_PAIRS; do
     ARCH_TOKEN="${PAIR%%:*}"
     APPIMAGE_ARCH="${PAIR##*:}"
-    for TAR_FILE in ${OUTPUT_DIR}/crosspaste-*-linux-${ARCH_TOKEN}.tar.gz; do
+    for TAR_FILE in ${OUTPUT_DIR}/clipflow-*-linux-${ARCH_TOKEN}.tar.gz; do
         build_appimage "$TAR_FILE" "$ARCH_TOKEN" "$APPIMAGE_ARCH"
         built=1
     done
 done
 
 if [ "$built" -eq 0 ]; then
-    echo "Error: No crosspaste-*-linux-*.tar.gz archive found in ${OUTPUT_DIR}"
+    echo "Error: No clipflow-*-linux-*.tar.gz archive found in ${OUTPUT_DIR}"
     exit 1
 fi

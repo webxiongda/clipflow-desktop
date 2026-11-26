@@ -1,0 +1,574 @@
+package com.clipflow.app
+
+import androidx.compose.ui.awt.ComposeWindow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.WindowState
+import com.clipflow.config.DesktopConfigManager
+import com.clipflow.listener.DesktopShortcutKeys.Companion.PASTE
+import com.clipflow.listener.ShortcutKeys
+import com.clipflow.listener.ShortcutKeysAction
+import com.clipflow.listener.ShortcutKeysListener
+import com.clipflow.notification.MessageType
+import com.clipflow.notification.NotificationManager
+import com.clipflow.path.UserDataPathProvider
+import com.clipflow.platform.Platform
+import com.clipflow.ui.DesktopDisplayScale.toWindowUnits
+import com.clipflow.utils.GlobalCoroutineScope.mainCoroutineDispatcher
+import com.clipflow.utils.ioDispatcher
+import com.clipflow.utils.namedScope
+import com.clipflow.utils.pollUntil
+import io.github.oshai.kotlinlogging.KLogger
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import okio.Path
+import java.awt.Frame
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+
+fun getDesktopAppWindowManager(
+    appInfo: AppInfo,
+    appSize: DesktopAppSize,
+    lazyConfigManager: Lazy<DesktopConfigManager>,
+    lazyShortcutKeys: Lazy<ShortcutKeys>,
+    lazyShortcutKeysAction: Lazy<ShortcutKeysAction>,
+    lazyShortcutKeysListener: Lazy<ShortcutKeysListener>,
+    lazyNotificationManager: Lazy<NotificationManager>,
+    platform: Platform,
+    userDataPathProvider: UserDataPathProvider,
+): DesktopAppWindowManager =
+    if (platform.isMacos()) {
+        MacAppWindowManager(
+            appInfo,
+            appSize,
+            lazyConfigManager,
+            lazyShortcutKeys,
+            lazyShortcutKeysListener,
+            lazyNotificationManager,
+            userDataPathProvider,
+        )
+    } else if (platform.isWindows()) {
+        WinAppWindowManager(
+            appInfo,
+            appSize,
+            lazyShortcutKeys,
+            lazyShortcutKeysListener,
+            lazyNotificationManager,
+            userDataPathProvider,
+        )
+    } else if (platform.isLinux()) {
+        LinuxAppWindowManager(
+            appInfo,
+            appSize,
+            lazyConfigManager,
+            lazyShortcutKeys,
+            lazyShortcutKeysAction,
+            lazyShortcutKeysListener,
+            lazyNotificationManager,
+            userDataPathProvider,
+        )
+    } else {
+        throw IllegalStateException("Unsupported platform: $platform")
+    }
+
+enum class WindowTrigger {
+    MENU,
+    SHORTCUT,
+    TRAY_ICON,
+    INIT,
+    SYSTEM,
+
+    // Non-interactive preview (e.g. appearance settings): the window is shown
+    // without taking focus and must not trigger platform focus activation
+    PREVIEW,
+}
+
+data class WindowInfo(
+    val show: Boolean,
+    val state: WindowState,
+    val trigger: WindowTrigger,
+)
+
+abstract class DesktopAppWindowManager(
+    val appSize: DesktopAppSize,
+) : AppWindowManager() {
+
+    companion object {
+        private const val MAIN_WINDOW_TITLE: String = "ClipFlow"
+
+        private const val SEARCH_WINDOW_TITLE = "ClipFlow Search"
+
+        private const val BUBBLE_WINDOW_TITLE = "ClipFlow Editor"
+
+        private const val PASTE_PANEL_WINDOW_TITLE = "ClipFlow Paste Panel"
+
+        private const val PASTE_PANEL_BUTTON_WINDOW_TITLE = "ClipFlow Paste Panel Button"
+        private const val PASTE_PANEL_MENU_WINDOW_TITLE = "ClipFlow Paste Panel Menu"
+        private const val SCREENSHOT_PREVIEW_WINDOW_TITLE = "ClipFlow Screenshot Preview"
+
+        private val FOREGROUND_TIMEOUT = 1.seconds
+
+        private val FOREGROUND_POLL_INTERVAL = 10.milliseconds
+
+        private val FULLSCREEN_POLL_INTERVAL = 500.milliseconds
+    }
+
+    protected val logger: KLogger = KotlinLogging.logger {}
+
+    val mainWindowTitle: String = MAIN_WINDOW_TITLE
+
+    val searchWindowTitle: String = SEARCH_WINDOW_TITLE
+
+    val bubbleWindowTitle: String = BUBBLE_WINDOW_TITLE
+
+    val pastePanelWindowTitle: String = PASTE_PANEL_WINDOW_TITLE
+
+    val pastePanelButtonWindowTitle: String = PASTE_PANEL_BUTTON_WINDOW_TITLE
+    val pastePanelMenuWindowTitle: String = PASTE_PANEL_MENU_WINDOW_TITLE
+    val screenshotPreviewWindowTitle: String = SCREENSHOT_PREVIEW_WINDOW_TITLE
+
+    protected val ioScope = namedScope(ioDispatcher, "DesktopAppWindowManager")
+
+    private val _mainWindowInfo =
+        MutableStateFlow(
+            WindowInfo(
+                show = false,
+                state = appSize.getMainWindowState(),
+                trigger = WindowTrigger.INIT,
+            ),
+        )
+    val mainWindowInfo: StateFlow<WindowInfo> = _mainWindowInfo
+
+    private val _alwaysOnTopMainWindow = MutableStateFlow(false)
+    val alwaysOnTopMainWindow: StateFlow<Boolean> = _alwaysOnTopMainWindow
+
+    var mainComposeWindow: ComposeWindow? = null
+        set(value) {
+            if (field != value) {
+                field = value
+                onMainComposeWindowChanged(value)
+            }
+        }
+
+    private val _searchWindowInfo =
+        MutableStateFlow(
+            WindowInfo(
+                show = false,
+                state = appSize.getSearchWindowState(true),
+                trigger = WindowTrigger.INIT,
+            ),
+        )
+    var searchWindowInfo: StateFlow<WindowInfo> = _searchWindowInfo
+
+    var searchComposeWindow: ComposeWindow? = null
+        set(value) {
+            if (field != value) {
+                field = value
+                onSearchComposeWindowChanged(value)
+            }
+        }
+
+    data class BubbleWindowInfo(
+        val show: Boolean = false,
+        val pasteId: Long = 0L,
+    )
+
+    private val _bubbleWindowInfo = MutableStateFlow(BubbleWindowInfo())
+    val bubbleWindowInfo: StateFlow<BubbleWindowInfo> = _bubbleWindowInfo
+
+    var bubbleComposeWindow: ComposeWindow? = null
+        set(value) {
+            if (field != value) {
+                field = value
+                onBubbleComposeWindowChanged(value)
+            }
+        }
+
+    fun showBubbleWindow(pasteId: Long) {
+        _bubbleWindowInfo.value = BubbleWindowInfo(show = true, pasteId = pasteId)
+    }
+
+    fun hideBubbleWindow() {
+        _bubbleWindowInfo.value = BubbleWindowInfo(show = false)
+    }
+
+    fun isBubbleWindowVisible(): Boolean = _bubbleWindowInfo.value.show
+
+    abstract suspend fun focusBubbleWindow()
+
+    /** Brings the already visible bubble back to the front with the keyboard focus. */
+    open suspend fun raiseBubbleWindow() {
+        focusBubbleWindow()
+    }
+
+    private val _bubbleAttentionRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /**
+     * Emits when the user tries to use the search window while the bubble is open: the
+     * bubble is modal, so it comes back to the front and flashes to show it must be
+     * handled or closed first.
+     */
+    val bubbleAttentionRequests: SharedFlow<Unit> = _bubbleAttentionRequests
+
+    fun requestBubbleAttention() {
+        _bubbleAttentionRequests.tryEmit(Unit)
+    }
+
+    // The paste panel and its floating button are non-activating windows: they never
+    // take focus away from the app the user is pasting into, so unlike the search
+    // window they need no previous-app bookkeeping and no platform focus hand-off.
+    // The button keeps its position for the session and is shown while the
+    // showPastePanelButton setting is on; the panel is placed beside it on every show.
+    private val _pastePanelButtonInfo =
+        MutableStateFlow(
+            WindowInfo(
+                show = false,
+                state = WindowState(),
+                trigger = WindowTrigger.INIT,
+            ),
+        )
+    val pastePanelButtonInfo: StateFlow<WindowInfo> = _pastePanelButtonInfo
+
+    fun showPastePanelButton() {
+        _pastePanelButtonInfo.update { current ->
+            val state =
+                // A remembered position can point at a display that has since been unplugged
+                if (current.state.position is WindowPosition.Absolute && appSize.isOnAnyDisplay(current.state)) {
+                    current.state
+                } else {
+                    appSize.getPastePanelButtonWindowState()
+                }
+            current.copy(show = true, state = state, trigger = WindowTrigger.SHORTCUT)
+        }
+    }
+
+    // Read by the full-screen polling off the UI thread
+    @Volatile
+    var pastePanelButtonComposeWindow: ComposeWindow? = null
+
+    // Set while a full-screen app (e.g. a full-screen video) is on the button's display,
+    // which the always-on-top button would otherwise cover. It hides the button alone:
+    // the setting, the remembered position and an open panel are left as they are.
+    private val _pastePanelButtonSuppressed = MutableStateFlow(false)
+    val pastePanelButtonSuppressed: StateFlow<Boolean> = _pastePanelButtonSuppressed
+
+    fun suppressPastePanelButton(suppressed: Boolean) {
+        _pastePanelButtonSuppressed.value = suppressed
+    }
+
+    /**
+     * Brings back a button hidden for a full-screen app until the full-screen state next
+     * changes. Returns false when the button was not hidden that way.
+     */
+    open suspend fun revealPastePanelButton(): Boolean =
+        _pastePanelButtonSuppressed.compareAndSet(expect = true, update = false)
+
+    /**
+     * Whether a full-screen app is on the button's display. Platforms that cannot tell keep
+     * this default, and the button stays shown.
+     */
+    open val fullscreenOverPastePanelButton: Flow<Boolean> = flowOf(false)
+
+    protected fun pollFullscreenOverPastePanelButton(isFullscreenOver: (ComposeWindow) -> Boolean): Flow<Boolean> =
+        pollFullscreen(FULLSCREEN_POLL_INTERVAL, logger) {
+            // Without a native peer the button has never been shown and covers nothing
+            pastePanelButtonComposeWindow?.takeIf { it.isDisplayable }?.let(isFullscreenOver) == true
+        }.flowOn(ioDispatcher)
+
+    fun hidePastePanelButton() {
+        hidePastePanelWindow()
+        _pastePanelButtonInfo.update { current -> current.copy(show = false) }
+    }
+
+    /** Applies a new button size from the appearance settings, keeping the top-left corner. */
+    fun resizePastePanelButton(size: Dp) {
+        val windowSize = size.toWindowUnits()
+        _pastePanelButtonInfo.update { current ->
+            if (current.state.size.width == windowSize) return
+            current.copy(
+                state =
+                    WindowState(
+                        placement = current.state.placement,
+                        position = current.state.position,
+                        size = DpSize(windowSize, windowSize),
+                    ),
+            )
+        }
+        if (_pastePanelWindowInfo.value.show) {
+            showPastePanelWindow(WindowTrigger.SYSTEM)
+        }
+    }
+
+    fun movePastePanelButton(position: WindowPosition.Absolute) {
+        _pastePanelButtonInfo.update { current ->
+            current.copy(
+                state =
+                    WindowState(
+                        placement = current.state.placement,
+                        position = position,
+                        size = current.state.size,
+                    ),
+            )
+        }
+        if (_pastePanelWindowInfo.value.show) {
+            showPastePanelWindow(WindowTrigger.SYSTEM)
+        }
+    }
+
+    private val _pastePanelWindowInfo =
+        MutableStateFlow(
+            WindowInfo(
+                show = false,
+                state = WindowState(),
+                trigger = WindowTrigger.INIT,
+            ),
+        )
+    val pastePanelWindowInfo: StateFlow<WindowInfo> = _pastePanelWindowInfo
+
+    fun getCurrentPastePanelWindowInfo(): WindowInfo = _pastePanelWindowInfo.value
+
+    fun showPastePanelWindow(windowTrigger: WindowTrigger) {
+        val state = appSize.getPastePanelWindowState(_pastePanelButtonInfo.value.state)
+        _pastePanelWindowInfo.update { current ->
+            current.copy(show = true, state = state, trigger = windowTrigger)
+        }
+    }
+
+    fun hidePastePanelWindow() {
+        _pastePanelWindowInfo.update { current -> current.copy(show = false) }
+    }
+
+    fun switchPastePanelWindow(windowTrigger: WindowTrigger) {
+        if (_pastePanelWindowInfo.value.show) {
+            hidePastePanelWindow()
+        } else {
+            showPastePanelWindow(windowTrigger)
+        }
+    }
+
+    private val _screenshotPreviewInfo =
+        MutableStateFlow(
+            WindowInfo(
+                show = false,
+                state = WindowState(),
+                trigger = WindowTrigger.INIT,
+            ),
+        )
+    val screenshotPreviewInfo: StateFlow<WindowInfo> = _screenshotPreviewInfo
+
+    /** Shows the screenshot preview bubble after a capture. */
+    fun showScreenshotPreviewWindow(windowTrigger: WindowTrigger = WindowTrigger.SYSTEM) {
+        _screenshotPreviewInfo.update { current ->
+            current.copy(show = true, state = appSize.getScreenshotPreviewWindowState(), trigger = windowTrigger)
+        }
+    }
+
+    fun hideScreenshotPreviewWindow() {
+        _screenshotPreviewInfo.update { current -> current.copy(show = false) }
+    }
+
+    abstract fun startWindowService()
+
+    abstract fun stopWindowService()
+
+    fun getCurrentMainWindowInfo(): WindowInfo = _mainWindowInfo.value
+
+    fun getCurrentSearchWindowInfo(): WindowInfo = _searchWindowInfo.value
+
+    fun hideMainWindow() {
+        _mainWindowInfo.value =
+            _mainWindowInfo.value.copy(
+                show = false,
+            )
+    }
+
+    fun showMainWindow(windowTrigger: WindowTrigger) {
+        // Re-clamp on every show: resolution, scale, taskbar size or the active
+        // display may have changed since the last one. Only the size is updated,
+        // so a position the user dragged the window to is preserved.
+        _mainWindowInfo.value.state.size = appSize.getClampedMainWindowSize()
+        _mainWindowInfo.value =
+            _mainWindowInfo.value.copy(
+                show = true,
+                trigger = windowTrigger,
+            )
+        mainCoroutineDispatcher.launch {
+            // AWT-level bring-to-front handles the already-visible case via the JVM's
+            // platform window APIs; focusMainWindow then runs the platform-specific
+            // aggressive activation (handles tray-menu focus race / app activation policy).
+            mainComposeWindow?.let { window ->
+                if (window.state == Frame.ICONIFIED) {
+                    window.state = Frame.NORMAL
+                }
+                window.toFront()
+                window.requestFocus()
+            }
+            focusMainWindow(windowTrigger)
+        }
+    }
+
+    abstract fun saveCurrentActiveAppInfo()
+
+    abstract suspend fun focusMainWindow(windowTrigger: WindowTrigger)
+
+    fun hideSearchWindow() {
+        hideBubbleWindow()
+        _searchWindowInfo.value = _searchWindowInfo.value.copy(show = false)
+    }
+
+    fun hideSearchWindowPreview() {
+        _searchWindowInfo.update { current ->
+            if (current.show && current.trigger == WindowTrigger.PREVIEW) {
+                current.copy(show = false)
+            } else {
+                current
+            }
+        }
+    }
+
+    /**
+     * Closes the search window without pasting and hands focus back to the app that
+     * was active before it opened. Use this for user-initiated closes; a plain
+     * [hideSearchWindow] leaves ClipFlow active with no key window on macOS.
+     *
+     * A keyboard-triggered close passes [awaitTriggerReleased] so the window stays up
+     * until the key is released: closing on key-down leaves the rest of that keystroke
+     * to land on a window-less ClipFlow or on the previous app, and macOS beeps at
+     * the unhandled key (other apps may act on it).
+     */
+    suspend fun dismissSearchWindow(awaitTriggerReleased: suspend () -> Unit = {}) {
+        awaitTriggerReleased()
+        hideSearchWindow()
+        returnFocusToPreviousApp()
+    }
+
+    protected abstract suspend fun returnFocusToPreviousApp()
+
+    suspend fun switchSearchWindow(
+        windowTrigger: WindowTrigger,
+        awaitTriggerReleased: suspend () -> Unit,
+        saveCurrentActiveAppInfo: () -> Unit,
+    ) {
+        val currentShow = _searchWindowInfo.value.show
+        if (currentShow) {
+            dismissSearchWindow(awaitTriggerReleased)
+        } else {
+            saveCurrentActiveAppInfo()
+            _searchWindowInfo.value =
+                _searchWindowInfo.value.copy(
+                    show = true,
+                    state = appSize.getSearchWindowState(false),
+                    trigger = windowTrigger,
+                )
+        }
+    }
+
+    fun showSearchWindow(windowTrigger: WindowTrigger) {
+        val state = appSize.getSearchWindowState(false)
+        _searchWindowInfo.update { current ->
+            current.copy(
+                show = true,
+                state = state,
+                trigger = windowTrigger,
+            )
+        }
+    }
+
+    fun showSearchWindowPreview() {
+        val state = appSize.getSearchWindowState(false)
+        _searchWindowInfo.update { current ->
+            current.copy(
+                show = true,
+                state = state,
+                trigger = if (current.show) current.trigger else WindowTrigger.PREVIEW,
+            )
+        }
+    }
+
+    fun refreshSearchWindowState() {
+        val state = appSize.getSearchWindowState(false)
+        _searchWindowInfo.update { current -> current.copy(state = state) }
+    }
+
+    abstract suspend fun focusSearchWindow(windowTrigger: WindowTrigger)
+
+    fun switchAlwaysOnTopMainWindow() {
+        _alwaysOnTopMainWindow.value = !_alwaysOnTopMainWindow.value
+    }
+
+    abstract fun getCurrentActiveAppName(): String?
+
+    abstract fun getRunningAppNames(): List<String>
+
+    /** File extensions (lower case, no dot) the "add app" picker offers on this platform. */
+    abstract val appPickerExtensions: Set<String>
+
+    /** Directory the "add app" picker opens in; null for the platform default. */
+    open val appPickerDirectory: Path? = null
+
+    /**
+     * Names the application at [appPath] exactly as clipboard changes from it
+     * are attributed, so the name can be matched against later, and caches its
+     * icon. Returns null when the file is not an application this platform
+     * recognises. Performs file I/O; call off the UI thread.
+     */
+    abstract fun resolveAppSource(appPath: Path): String?
+
+    abstract suspend fun hideMainWindowAndPaste(preparePaste: suspend () -> Boolean = { false })
+
+    abstract suspend fun hideSearchWindowAndPaste(
+        size: Int,
+        preparePaste: suspend (Int) -> Boolean = { false },
+    )
+
+    abstract fun getPrevAppName(): Flow<String?>
+
+    /**
+     * Waits for the app the user is pasting into to come back to the foreground:
+     * activation is asynchronous, and a keystroke injected before it completes lands
+     * in whichever app holds the focus at that moment.
+     */
+    protected suspend fun awaitForeground(isForeground: () -> Boolean): Boolean {
+        val foreground = pollUntil(FOREGROUND_TIMEOUT, FOREGROUND_POLL_INTERVAL, isForeground)
+        if (!foreground) {
+            logger.warn { "Previous app did not return to the foreground within $FOREGROUND_TIMEOUT" }
+        }
+        return foreground
+    }
+
+    /**
+     * Last resort when the paste keystroke cannot be delivered to the right app. The
+     * content is already on the clipboard by this point, so say so and let the user
+     * paste it.
+     */
+    protected fun notifyManualPasteRequired(
+        notificationManager: NotificationManager,
+        shortcutKeys: ShortcutKeys,
+    ) {
+        logger.info { "No way to deliver the paste, asking the user to paste manually" }
+        val pasteShortcut =
+            shortcutKeys.shortcutKeysCore.value.keys[PASTE]
+                ?.joinToString("+") { it.name }
+                ?: ""
+        notificationManager.sendNotification(
+            title = { it.getText("copy_successful") },
+            message = { it.getText("paste_manually_required", pasteShortcut) },
+            messageType = MessageType.Info,
+        )
+    }
+
+    protected open fun onMainComposeWindowChanged(window: ComposeWindow?) {}
+
+    protected open fun onSearchComposeWindowChanged(window: ComposeWindow?) {}
+
+    protected open fun onBubbleComposeWindowChanged(window: ComposeWindow?) {}
+}

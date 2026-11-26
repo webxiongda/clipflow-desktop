@@ -1,0 +1,1914 @@
+package com.clipflow.sync
+
+import com.clipflow.app.AppInfo
+import com.clipflow.app.RatingPromptManager
+import com.clipflow.db.sync.HostInfo
+import com.clipflow.db.sync.SyncRuntimeInfo
+import com.clipflow.db.sync.SyncRuntimeInfoDao
+import com.clipflow.db.sync.SyncState
+import com.clipflow.dto.secure.KeyExchangeResponse
+import com.clipflow.dto.sync.SyncInfo
+import com.clipflow.exception.PasteException
+import com.clipflow.exception.StandardErrorCode
+import com.clipflow.net.NetworkInterfaceInfo
+import com.clipflow.net.NetworkInterfaceService
+import com.clipflow.net.PasteBonjourService
+import com.clipflow.net.SyncInfoFactory
+import com.clipflow.net.TelnetHelper
+import com.clipflow.net.TelnetResult
+import com.clipflow.net.VersionRelation
+import com.clipflow.net.clientapi.ConnectionRefused
+import com.clipflow.net.clientapi.DecryptFail
+import com.clipflow.net.clientapi.EncryptFail
+import com.clipflow.net.clientapi.FailureResult
+import com.clipflow.net.clientapi.SuccessResult
+import com.clipflow.net.clientapi.SyncClientApi
+import com.clipflow.net.clientapi.UnknownError
+import com.clipflow.net.ws.WsClientConnector
+import com.clipflow.net.ws.WsSessionManager
+import com.clipflow.platform.Platform
+import com.clipflow.secure.SecureKeyPair
+import com.clipflow.secure.SecureStore
+import com.clipflow.sync.SyncTestFixtures.createConnectedSyncRuntimeInfo
+import com.clipflow.sync.SyncTestFixtures.createConnectingSyncRuntimeInfo
+import com.clipflow.sync.SyncTestFixtures.createSyncRuntimeInfo
+import com.clipflow.sync.SyncTestFixtures.createUnverifiedSyncRuntimeInfo
+import com.clipflow.utils.CryptographyUtils
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
+import kotlinx.coroutines.test.runTest
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class SyncResolverTest {
+
+    private class TestDeps {
+        val pasteBonjourService: PasteBonjourService = mockk(relaxed = true)
+        val networkInterfaceService: NetworkInterfaceService =
+            mockk(relaxed = true) {
+                // Default to "online": discoverAndConnect now gates on having a usable
+                // local interface, so the resolver must see at least one by default.
+                // Tests covering the offline path override this to emptyList().
+                every { getCurrentUseNetworkInterfaces() } returns
+                    listOf(NetworkInterfaceInfo("en0", 24, "192.168.1.2"))
+            }
+        val pendingExchangeLedger: PendingExchangeLedger = PendingExchangeLedger()
+        val ratingPromptManager: RatingPromptManager = mockk(relaxed = true)
+        val secureKeyPairSerializer: com.clipflow.secure.SecureKeyPairSerializer = mockk(relaxed = true)
+        val secureStore: SecureStore = mockk(relaxed = true)
+        val syncClientApi: SyncClientApi = mockk(relaxed = true)
+        val syncDeviceManager: SyncDeviceManager = mockk(relaxed = true)
+        val syncInfoFactory: SyncInfoFactory = mockk(relaxed = true)
+        val syncRuntimeInfoDao: SyncRuntimeInfoDao = mockk(relaxed = true)
+        val telnetHelper: TelnetHelper = mockk(relaxed = true)
+        val tokenCache: FakeTokenCache = FakeTokenCache()
+        val appInfo: AppInfo =
+            mockk(relaxed = true) {
+                every { appInstanceId } returns "local-test-id"
+            }
+        val localPlatform: Platform =
+            mockk(relaxed = true) {
+                every { isDesktop() } returns true
+            }
+        val wsClientConnector: WsClientConnector = mockk(relaxed = true)
+        val wsSessionManager: WsSessionManager = mockk(relaxed = true)
+
+        fun stubDbRead(syncRuntimeInfo: SyncRuntimeInfo) {
+            coEvery { syncRuntimeInfoDao.getSyncRuntimeInfo(syncRuntimeInfo.appInstanceId) } returns syncRuntimeInfo
+        }
+
+        fun createResolver(): SyncResolver =
+            SyncResolver(
+                appInfo = appInfo,
+                localPlatform = localPlatform,
+                lazyPasteBonjourService = lazy { pasteBonjourService },
+                networkInterfaceService = networkInterfaceService,
+                pendingExchangeLedger = pendingExchangeLedger,
+                ratingPromptManager = ratingPromptManager,
+                secureKeyPairSerializer = secureKeyPairSerializer,
+                secureStore = secureStore,
+                syncClientApi = syncClientApi,
+                syncDeviceManager = syncDeviceManager,
+                syncInfoFactory = syncInfoFactory,
+                syncRuntimeInfoDao = syncRuntimeInfoDao,
+                telnetHelper = telnetHelper,
+                tokenCache = tokenCache,
+                wsClientConnector = wsClientConnector,
+                wsSessionManager = wsSessionManager,
+            )
+    }
+
+    private class FakeTokenCache : TokenCacheApi {
+        private val tokens = mutableMapOf<String, QrBearerToken>()
+
+        override fun setToken(
+            appInstanceId: String,
+            token: QrBearerToken,
+        ) {
+            tokens[appInstanceId] = token
+        }
+
+        override fun getToken(appInstanceId: String): QrBearerToken? = tokens.remove(appInstanceId)
+    }
+
+    // ========== A. resolveDisconnected ==========
+
+    @Test
+    fun resolve_disconnected_switchHostEqualAndHeartbeatOk_setsConnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createSyncRuntimeInfo(
+                    hostInfoList = listOf(HostInfo(24, "192.168.1.100")),
+                )
+            val hostInfo = HostInfo(24, "192.168.1.100")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns
+                Pair(hostInfo, TelnetResult(VersionRelation.EQUAL_TO, null))
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            val capturedInfos = mutableListOf<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfos)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(SyncState.CONNECTING, capturedInfos[0].connectState)
+            assertEquals("192.168.1.100", capturedInfos[0].connectHostAddress)
+            assertEquals(SyncState.CONNECTED, capturedInfos[1].connectState)
+        }
+
+    @Test
+    fun resolveDisconnected_existingV2TrustSurvivesPeerCapabilityUpgrade() =
+        runTest {
+            // Pairing capability selects how NEW trust is established. A peer that was
+            // paired under v2 already has a long-term crypt key, so an app upgrade must
+            // authenticate that key directly instead of forcing a v3 pairing ceremony.
+            // SyncRuntimeInfo intentionally has no pairing capability field: this pins
+            // the resolver-layer invariant that persisted trust is capability-agnostic.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createSyncRuntimeInfo(
+                    hostInfoList = listOf(HostInfo(24, "192.168.1.100")),
+                )
+            val hostInfo = HostInfo(24, "192.168.1.100")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns
+                Pair(hostInfo, TelnetResult(VersionRelation.EQUAL_TO, syncRuntimeInfo.appInstanceId))
+            coEvery { deps.secureStore.existCryptPublicKey(syncRuntimeInfo.appInstanceId) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), syncRuntimeInfo.appInstanceId, any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            val capturedInfos = mutableListOf<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfos)) } returns
+                syncRuntimeInfo.appInstanceId
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.CONNECTED, capturedInfos.last().connectState)
+            coVerify(exactly = 1) {
+                deps.syncClientApi.heartbeat(any(), syncRuntimeInfo.appInstanceId, any())
+            }
+            coVerify(exactly = 0) {
+                deps.secureStore.deleteCryptPublicKey(syncRuntimeInfo.appInstanceId)
+            }
+        }
+
+    @Test
+    fun resolveDisconnected_fastProbeIdentityMismatch_fallsThroughToCorrectHost() =
+        runTest {
+            // #4499 Phase A: a ghost squats on our last address (.108) advertising a
+            // different identity. The fast probe must reject it and fall through to the
+            // full-list probe, which finds the real peer that moved to .109.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createSyncRuntimeInfo(
+                    connectState = SyncState.DISCONNECTED,
+                    connectHostAddress = "192.168.1.108",
+                    hostInfoList =
+                        listOf(
+                            HostInfo(24, "192.168.1.108"),
+                            HostInfo(24, "192.168.1.109"),
+                        ),
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            // Fast probe of .108 is reachable but returns a foreign identity.
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns
+                TelnetResult(VersionRelation.EQUAL_TO, "ghost-app-id")
+            // Full-list probe surfaces the real peer (identity-matched) at .109.
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns
+                Pair(
+                    HostInfo(24, "192.168.1.109"),
+                    TelnetResult(VersionRelation.EQUAL_TO, syncRuntimeInfo.appInstanceId),
+                )
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            val capturedInfos = mutableListOf<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfos)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            // Never connected to the ghost .108; converged on the real .109.
+            assertEquals(SyncState.CONNECTING, capturedInfos[0].connectState)
+            assertEquals("192.168.1.109", capturedInfos[0].connectHostAddress)
+            assertEquals(SyncState.CONNECTED, capturedInfos[1].connectState)
+            assertEquals("192.168.1.109", capturedInfos[1].connectHostAddress)
+            coVerify { deps.telnetHelper.switchHost(any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun resolveDisconnected_switchHostReturnsLowerThan_setsIncompatible() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo()
+            val hostInfo = HostInfo(24, "192.168.1.100")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns
+                Pair(hostInfo, TelnetResult(VersionRelation.LOWER_THAN, null))
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(SyncState.INCOMPATIBLE, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun resolveDisconnected_switchHostReturnsHigherThan_setsIncompatible() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo()
+            val hostInfo = HostInfo(24, "192.168.1.100")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns
+                Pair(hostInfo, TelnetResult(VersionRelation.HIGHER_THAN, null))
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(SyncState.INCOMPATIBLE, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun resolveDisconnected_switchHostReturnsNull_alreadyDisconnected_doesNotRewriteDb() =
+        runTest {
+            // Convergence guard: a device that is already DISCONNECTED and still has no
+            // reachable host must NOT be re-persisted. Re-writing DISCONNECTED on every
+            // poll bumps modifyTime, re-emits the DB flow, and churns the handler.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo(connectState = SyncState.DISCONNECTED)
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns null
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            coVerify(exactly = 0) { deps.syncRuntimeInfoDao.updateConnectInfo(any()) }
+        }
+
+    @Test
+    fun resolveDisconnected_switchHostReturnsNull_fromNonDisconnected_persistsDisconnected() =
+        runTest {
+            // When the device was NOT already DISCONNECTED, losing the host must still
+            // persist the DISCONNECTED transition exactly once.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo(connectState = SyncState.INCOMPATIBLE)
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns null
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(SyncState.DISCONNECTED, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun resolveDisconnected_emptyHostInfoList_switchHostCalledWithEmptyList() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo(hostInfoList = emptyList())
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns null
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            coVerify { deps.telnetHelper.switchHost(emptyList(), any(), any(), any()) }
+            // Already DISCONNECTED with no host → no redundant DB write.
+            coVerify(exactly = 0) { deps.syncRuntimeInfoDao.updateConnectInfo(any()) }
+        }
+
+    @Test
+    fun discoverAndConnect_noLocalInterface_skipsProbingAndStaysDisconnected() =
+        runTest {
+            // #4509 phase 2: with no usable local interface, every telnet would fail and
+            // spam "no reachable host". The gate must skip discovery entirely — no telnet,
+            // no switchHost — and not re-persist an already-DISCONNECTED device.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createSyncRuntimeInfo(
+                    connectState = SyncState.DISCONNECTED,
+                    hostInfoList = listOf(HostInfo(24, "192.168.1.100")),
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            every { deps.networkInterfaceService.getCurrentUseNetworkInterfaces() } returns emptyList()
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            coVerify(exactly = 0) { deps.telnetHelper.telnet(any(), any(), any()) }
+            coVerify(exactly = 0) { deps.telnetHelper.switchHost(any(), any(), any(), any()) }
+            coVerify(exactly = 0) { deps.syncRuntimeInfoDao.updateConnectInfo(any()) }
+        }
+
+    @Test
+    fun discoverAndConnect_noLocalInterface_fromNonDisconnected_persistsDisconnectedOnce() =
+        runTest {
+            // A device that was CONNECTED loses all local interfaces: the gate must still
+            // record the DISCONNECTED transition exactly once (so the UI reflects reality)
+            // without probing any host.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createConnectedSyncRuntimeInfo(hostAddress = "192.168.1.108")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            // Heartbeat on the current address fails → falls through to discoverAndConnect.
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns ConnectionRefused
+            every { deps.networkInterfaceService.getCurrentUseNetworkInterfaces() } returns emptyList()
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.DISCONNECTED, capturedInfo.captured.connectState)
+            coVerify(exactly = 0) { deps.telnetHelper.switchHost(any(), any(), any(), any()) }
+        }
+
+    // ========== A2. Phase E: recency-first probing + active switch ==========
+
+    @Test
+    fun discoverReachableHost_fastProbesFreshestAddressFirst() =
+        runTest {
+            // Two known addresses; .109 was advertised more recently than .108.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createSyncRuntimeInfo(
+                    connectState = SyncState.DISCONNECTED,
+                    hostInfoList =
+                        listOf(
+                            HostInfo(24, "192.168.1.108", lastSeen = 1L),
+                            HostInfo(24, "192.168.1.109", lastSeen = 100L),
+                        ),
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns
+                TelnetResult(VersionRelation.EQUAL_TO, syncRuntimeInfo.appInstanceId)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            val capturedInfos = mutableListOf<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfos)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            // Fresh .109 is the fast-probe target and the address we connect on.
+            coVerify { deps.telnetHelper.telnet("192.168.1.109", any(), any()) }
+            assertEquals(SyncState.CONNECTING, capturedInfos[0].connectState)
+            assertEquals("192.168.1.109", capturedInfos[0].connectHostAddress)
+        }
+
+    @Test
+    fun verifyConnection_currentAddressDead_activeSwitchesWithoutDisconnect() =
+        runTest {
+            // CONNECTED on .108; heartbeat there fails, but the peer is reachable at the
+            // freshly-advertised .109. Must switch CONNECTED -> CONNECTING -> CONNECTED
+            // with NO intervening DISCONNECTED write (#4499 weakness ①).
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createSyncRuntimeInfo(
+                    connectState = SyncState.CONNECTED,
+                    connectHostAddress = "192.168.1.108",
+                    connectNetworkPrefixLength = 24,
+                    hostInfoList =
+                        listOf(
+                            HostInfo(24, "192.168.1.108", lastSeen = 1L),
+                            HostInfo(24, "192.168.1.109", lastSeen = 100L),
+                        ),
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns
+                TelnetResult(VersionRelation.EQUAL_TO, syncRuntimeInfo.appInstanceId)
+            // First heartbeat (verify .108) fails; second (authenticate .109) succeeds.
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returnsMany
+                listOf(ConnectionRefused, SuccessResult(VersionRelation.EQUAL_TO))
+
+            val capturedInfos = mutableListOf<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfos)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertTrue(capturedInfos.none { it.connectState == SyncState.DISCONNECTED })
+            assertEquals(SyncState.CONNECTING, capturedInfos[0].connectState)
+            assertEquals("192.168.1.109", capturedInfos[0].connectHostAddress)
+            assertEquals(SyncState.CONNECTED, capturedInfos.last().connectState)
+            assertEquals("192.168.1.109", capturedInfos.last().connectHostAddress)
+        }
+
+    @Test
+    fun verifyConnection_connectAddressNotInHostInfoList_butAlive_staysConnected() =
+        runTest {
+            // Intentional Phase E boundary: connectHostAddress may have been LRU-evicted
+            // from hostInfoList (the peer broadcast newer addresses) yet still be alive.
+            // verifyConnection must heartbeat it DIRECTLY and keep the connection — it must
+            // NOT require connectHostAddress to be a member of hostInfoList. This guards
+            // against a future refactor that only ever probes hostInfoList.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createSyncRuntimeInfo(
+                    connectState = SyncState.CONNECTED,
+                    connectHostAddress = "192.168.1.5",
+                    connectNetworkPrefixLength = 24,
+                    // .5 is deliberately absent from the host list.
+                    hostInfoList =
+                        (1..HostInfo.MAX_RECENT_HOST_INFO).map { i ->
+                            HostInfo(24, "192.168.9.$i", lastSeen = i.toLong())
+                        },
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            // Heartbeat on the (off-list) connect address succeeded → still CONNECTED,
+            // no state write at all.
+            coVerify(exactly = 0) { deps.syncRuntimeInfoDao.updateConnectInfo(any()) }
+        }
+
+    @Test
+    fun verifyConnection_currentAddressDeadAndNoReachableHost_setsDisconnected() =
+        runTest {
+            // CONNECTED, heartbeat fails, and re-discovery finds nothing reachable ->
+            // the active-switch path falls through to DISCONNECTED.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectedSyncRuntimeInfo(hostAddress = "192.168.1.108")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns ConnectionRefused
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns null
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns null
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.DISCONNECTED, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun verifyConnection_wsAbsentAndHeartbeatConnected_attemptsWebSocketUpgrade() =
+        runTest {
+            // Reproduces iOS resume after pause() closed all WS sessions while DB stayed
+            // CONNECTED: ForceResolve/Resolve enters verifyConnection(), HTTP heartbeat
+            // succeeds, and the mobile initiator must re-establish WebSocket instead of
+            // staying permanently degraded to HTTP polling.
+            val deps = TestDeps()
+            every { deps.localPlatform.isDesktop() } returns false
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createConnectedSyncRuntimeInfo(
+                    appInstanceId = "desktop-peer",
+                    hostAddress = "192.168.1.108",
+                ).copy(
+                    platform =
+                        Platform(
+                            name = Platform.MACOS,
+                            arch = "arm64",
+                            bitMode = 64,
+                            version = "15.0",
+                        ),
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(syncRuntimeInfo.appInstanceId) } returns false
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            resolver.emitEvent(SyncEvent.ForceResolve(syncRuntimeInfo, createTestCallback()))
+
+            coVerify(exactly = 1) {
+                deps.wsClientConnector.connectAsync(
+                    "192.168.1.108",
+                    syncRuntimeInfo.port,
+                    syncRuntimeInfo.appInstanceId,
+                )
+            }
+            coVerify(exactly = 0) { deps.syncRuntimeInfoDao.updateConnectInfo(any()) }
+        }
+
+    @Test
+    fun verifyConnection_wsAbsent_nonInitiatorDoesNotAttemptWebSocketUpgrade() =
+        runTest {
+            val deps = TestDeps()
+            every { deps.localPlatform.isDesktop() } returns true
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createConnectedSyncRuntimeInfo(
+                    appInstanceId = "mobile-peer",
+                    hostAddress = "192.168.1.109",
+                ).copy(
+                    platform =
+                        Platform(
+                            name = Platform.IPHONE,
+                            arch = "arm64",
+                            bitMode = 64,
+                            version = "18.0",
+                        ),
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(syncRuntimeInfo.appInstanceId) } returns false
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            coVerify(exactly = 0) { deps.wsClientConnector.connectAsync(any(), any(), any()) }
+        }
+
+    @Test
+    fun verifyConnection_wsConnectedWithHeartbeatAckAndProbeFails_fallsBackToHttpAndReupgrades() =
+        runTest {
+            val deps = TestDeps()
+            every { deps.localPlatform.isDesktop() } returns false
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createConnectedSyncRuntimeInfo(
+                    appInstanceId = "desktop-peer",
+                    hostAddress = "192.168.1.108",
+                ).copy(
+                    platform =
+                        Platform(
+                            name = Platform.MACOS,
+                            arch = "arm64",
+                            bitMode = 64,
+                            version = "15.0",
+                        ),
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            every { deps.wsSessionManager.isConnected(syncRuntimeInfo.appInstanceId) } returnsMany listOf(true, false)
+            every { deps.wsSessionManager.supportsHeartbeatAck(syncRuntimeInfo.appInstanceId) } returns true
+            coEvery { deps.wsSessionManager.probe(syncRuntimeInfo.appInstanceId) } returns false
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            coVerify(exactly = 1) { deps.wsSessionManager.probe(syncRuntimeInfo.appInstanceId) }
+            coVerify(exactly = 1) { deps.syncClientApi.heartbeat(any(), syncRuntimeInfo.appInstanceId, any()) }
+            coVerify(exactly = 1) {
+                deps.wsClientConnector.connectAsync(
+                    "192.168.1.108",
+                    syncRuntimeInfo.port,
+                    syncRuntimeInfo.appInstanceId,
+                )
+            }
+        }
+
+    @Test
+    fun verifyConnection_wsConnectedWithHeartbeatAckAndProbeSucceeds_skipsHttpHeartbeat() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createConnectedSyncRuntimeInfo(
+                    appInstanceId = "desktop-peer",
+                    hostAddress = "192.168.1.108",
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            every { deps.wsSessionManager.isConnected(syncRuntimeInfo.appInstanceId) } returns true
+            every { deps.wsSessionManager.supportsHeartbeatAck(syncRuntimeInfo.appInstanceId) } returns true
+            coEvery { deps.wsSessionManager.probe(syncRuntimeInfo.appInstanceId) } returns true
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            coVerify(exactly = 1) { deps.wsSessionManager.probe(syncRuntimeInfo.appInstanceId) }
+            coVerify(exactly = 0) { deps.syncClientApi.heartbeat(any(), any(), any()) }
+        }
+
+    // ========== A2. steady-state heartbeat address advertise (#4509) ==========
+
+    @Test
+    fun verifyConnection_advertisesSubnetMatchedAddressOncePerChange() =
+        runTest {
+            // Steady state: the liveness heartbeat piggybacks our subnet-matched return
+            // address so the peer learns it without waiting for mDNS — but only the first
+            // time. A second heartbeat with the same local address must send GET (null
+            // syncInfo) so the peer's trustSyncInfo isn't re-run every cycle.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectedSyncRuntimeInfo(hostAddress = "192.168.1.108")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            coEvery { deps.syncInfoFactory.createSyncInfo(any()) } returns mockk<SyncInfo>(relaxed = true)
+
+            val advertised = mutableListOf<SyncInfo?>()
+            coEvery {
+                deps.syncClientApi.heartbeat(captureNullable(advertised), any(), any())
+            } returns SuccessResult(VersionRelation.EQUAL_TO)
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(2, advertised.size)
+            assertNotNull(advertised[0], "first heartbeat should advertise our address")
+            assertNull(advertised[1], "unchanged address must not re-advertise")
+        }
+
+    @Test
+    fun verifyConnection_localAddressChanges_reAdvertises() =
+        runTest {
+            // When our own interface address changes between heartbeats, the recomputed
+            // subnet-matched list differs from what we last delivered, so we advertise again.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectedSyncRuntimeInfo(hostAddress = "192.168.1.108")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            coEvery { deps.syncInfoFactory.createSyncInfo(any()) } returns mockk<SyncInfo>(relaxed = true)
+
+            var localInterfaces = listOf(NetworkInterfaceInfo("en0", 24, "192.168.1.2"))
+            every { deps.networkInterfaceService.getCurrentUseNetworkInterfaces() } answers { localInterfaces }
+
+            val advertised = mutableListOf<SyncInfo?>()
+            coEvery {
+                deps.syncClientApi.heartbeat(captureNullable(advertised), any(), any())
+            } returns SuccessResult(VersionRelation.EQUAL_TO)
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+            // Our IP moves within the peer's subnet.
+            localInterfaces = listOf(NetworkInterfaceInfo("en0", 24, "192.168.1.3"))
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(2, advertised.size)
+            assertNotNull(advertised[0], "first heartbeat advertises")
+            assertNotNull(advertised[1], "changed local address must re-advertise")
+        }
+
+    @Test
+    fun verifyConnection_crossSubnetPeer_advertisesNothing() =
+        runTest {
+            // No local interface shares the peer's subnet → nothing routable to advertise;
+            // the heartbeat falls back to a plain GET and discovery self-healing covers it.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectedSyncRuntimeInfo(hostAddress = "10.0.0.9")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            every { deps.networkInterfaceService.getCurrentUseNetworkInterfaces() } returns
+                listOf(NetworkInterfaceInfo("en0", 24, "192.168.1.2"))
+
+            val advertised = mutableListOf<SyncInfo?>()
+            coEvery {
+                deps.syncClientApi.heartbeat(captureNullable(advertised), any(), any())
+            } returns SuccessResult(VersionRelation.EQUAL_TO)
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(1, advertised.size)
+            assertNull(advertised[0], "cross-subnet peer must not be advertised to")
+            coVerify(exactly = 0) { deps.syncInfoFactory.createSyncInfo(any()) }
+        }
+
+    @Test
+    fun verifyConnection_failedHeartbeatReAdvertisesOnReconnect() =
+        runTest {
+            // A non-success heartbeat must forget what we advertised, so the next successful
+            // heartbeat (after a reconnect) re-advertises even though the address is unchanged.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectedSyncRuntimeInfo(hostAddress = "192.168.1.108")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            coEvery { deps.syncInfoFactory.createSyncInfo(any()) } returns mockk<SyncInfo>(relaxed = true)
+            // Reconnect probes (after the failure) find nothing, so the pass settles without
+            // changing the device we re-read from the DB on the next pass.
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns null
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns null
+
+            val advertised = mutableListOf<SyncInfo?>()
+            coEvery {
+                deps.syncClientApi.heartbeat(captureNullable(advertised), any(), any())
+            } returnsMany
+                listOf(
+                    SuccessResult(VersionRelation.EQUAL_TO),
+                    ConnectionRefused,
+                    SuccessResult(VersionRelation.EQUAL_TO),
+                )
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(3, advertised.size)
+            assertNotNull(advertised[0], "first heartbeat advertises")
+            assertNull(advertised[1], "address unchanged → failing heartbeat was a plain GET")
+            assertNotNull(advertised[2], "failure cleared the marker → re-advertise on recovery")
+        }
+
+    @Test
+    fun markExit_clearsAdvertiseMarker_soReconnectReAdvertises() =
+        runTest {
+            // A graceful exit removes the dedup marker; otherwise no heartbeat would ever
+            // come to evict it. After exit, a reconnect re-advertises even though our address
+            // never changed (without the cleanup the second heartbeat would be a silent GET).
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectedSyncRuntimeInfo(hostAddress = "192.168.1.108")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            coEvery { deps.syncInfoFactory.createSyncInfo(any()) } returns mockk<SyncInfo>(relaxed = true)
+
+            val advertised = mutableListOf<SyncInfo?>()
+            coEvery {
+                deps.syncClientApi.heartbeat(captureNullable(advertised), any(), any())
+            } returns SuccessResult(VersionRelation.EQUAL_TO)
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+            resolver.emitEvent(SyncEvent.MarkExit(syncRuntimeInfo))
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(2, advertised.size)
+            assertNotNull(advertised[0], "first heartbeat advertises")
+            assertNotNull(advertised[1], "exit cleared the marker → reconnect re-advertises")
+        }
+
+    @Test
+    fun trustHandshake_recordsAdvertiseMarker_soNextHeartbeatStaysQuiet() =
+        runTest {
+            // A fresh pairing (trustByTokenCache) sends our SyncInfo as part of the handshake.
+            // It must record what it advertised, so the very next steady-state heartbeat does
+            // NOT redundantly re-send the same address (map would otherwise still be empty).
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val connecting = createConnectingSyncRuntimeInfo(hostAddress = "192.168.1.108")
+
+            deps.stubDbRead(connecting)
+            deps.tokenCache.setToken(connecting.appInstanceId, QrBearerToken(123456))
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns false
+            coEvery { deps.syncClientApi.trust(any(), any(), any(), any()) } returns SuccessResult(true)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            coEvery { deps.syncInfoFactory.createSyncInfo(any()) } returns mockk<SyncInfo>(relaxed = true)
+
+            val advertised = mutableListOf<SyncInfo?>()
+            coEvery {
+                deps.syncClientApi.heartbeat(captureNullable(advertised), any(), any())
+            } returns SuccessResult(VersionRelation.EQUAL_TO)
+
+            // Pass 1: pairing via token cache → handshake heartbeat carries our address.
+            resolver.emitEvent(SyncEvent.Resolve(connecting, createTestCallback()))
+
+            // Pass 2: now CONNECTED → steady-state liveness heartbeat on the same address.
+            deps.stubDbRead(createConnectedSyncRuntimeInfo(hostAddress = "192.168.1.108"))
+            resolver.emitEvent(SyncEvent.Resolve(connecting, createTestCallback()))
+
+            assertEquals(2, advertised.size)
+            assertNotNull(advertised[0], "pairing handshake advertises our address")
+            assertNull(advertised[1], "handshake recorded the marker → steady heartbeat is a GET")
+        }
+
+    // ========== B. resolveConnecting ==========
+
+    @Test
+    fun resolveConnecting_hasCryptoKeyAndHeartbeatConnected_setsConnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(SyncState.CONNECTED, capturedInfo.captured.connectState)
+            verify { deps.ratingPromptManager.trackSignificantAction() }
+        }
+
+    @Test
+    fun resolveConnecting_hasCryptoKeyAndHeartbeatUnmatched_deletesKeyAndTriesTokenCache() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns DecryptFail
+
+            // No token cached, telnet returns null -> DISCONNECTED
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns null
+
+            val capturedInfos = mutableListOf<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfos)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            coVerify { deps.secureStore.deleteCryptPublicKey(syncRuntimeInfo.appInstanceId) }
+        }
+
+    @Test
+    fun resolveConnecting_hasCryptoKeyAndHeartbeatIncompatible_setsIncompatible() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.LOWER_THAN)
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(SyncState.INCOMPATIBLE, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun resolveConnecting_heartbeatConnectionRefused_setsDisconnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns ConnectionRefused
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(SyncState.DISCONNECTED, capturedInfo.captured.connectState)
+        }
+
+    // ========== C. heartbeat result mapping ==========
+
+    @Test
+    fun heartbeat_successWithHigherThan_returnsIncompatible() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.HIGHER_THAN)
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.INCOMPATIBLE, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun heartbeat_successWithNull_returnsDisconnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(null)
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.DISCONNECTED, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun heartbeat_failureNotMatchAppInstanceId_returnsDisconnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                FailureResult(
+                    PasteException(
+                        StandardErrorCode.NOT_MATCH_APP_INSTANCE_ID.toErrorCode(),
+                        "not match",
+                    ),
+                )
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.DISCONNECTED, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun heartbeat_failureDecryptFail_returnsUnmatched() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                FailureResult(
+                    PasteException(
+                        StandardErrorCode.DECRYPT_FAIL.toErrorCode(),
+                        "decrypt fail",
+                    ),
+                )
+
+            // After UNMATCHED: deletes key, tries token cache
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns null
+
+            val capturedInfos = mutableListOf<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfos)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            coVerify { deps.secureStore.deleteCryptPublicKey(any()) }
+        }
+
+    @Test
+    fun heartbeat_encryptFail_returnsUnmatched() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns EncryptFail
+
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns null
+
+            val capturedInfos = mutableListOf<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfos)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            coVerify { deps.secureStore.deleteCryptPublicKey(any()) }
+        }
+
+    @Test
+    fun heartbeat_unknownError_returnsDisconnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns UnknownError
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.DISCONNECTED, capturedInfo.captured.connectState)
+        }
+
+    // ========== D. tryUseTokenCache ==========
+
+    @Test
+    fun tryUseTokenCache_tokenCachedAndTrustSucceeds_setsConnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            deps.tokenCache.setToken(syncRuntimeInfo.appInstanceId, QrBearerToken(123456))
+
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns false
+            coEvery { deps.syncClientApi.trust(any(), any(), any(), any()) } returns SuccessResult(true)
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+            coEvery { deps.syncInfoFactory.createSyncInfo(any()) } returns
+                SyncTestFixtures.createSyncInfo()
+            coEvery { deps.networkInterfaceService.getCurrentUseNetworkInterfaces() } returns emptyList()
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.CONNECTED, capturedInfo.captured.connectState)
+            verify { deps.ratingPromptManager.trackSignificantAction() }
+        }
+
+    @Test
+    fun tryUseTokenCache_tokenCachedButTrustFails_fallsBackToTelnet() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            deps.tokenCache.setToken(syncRuntimeInfo.appInstanceId, QrBearerToken(123456))
+
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns false
+            coEvery { deps.syncClientApi.trust(any(), any(), any(), any()) } returns
+                FailureResult(PasteException(StandardErrorCode.TOKEN_INVALID.toErrorCode(), "invalid"))
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns
+                TelnetResult(VersionRelation.EQUAL_TO, null)
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.UNVERIFIED, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun tryUseTokenCache_noTokenAndTelnetEqualTo_setsUnverified() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns false
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns
+                TelnetResult(VersionRelation.EQUAL_TO, null)
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.UNVERIFIED, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun tryUseTokenCache_noTokenAndTelnetNonEqual_setsIncompatible() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns false
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns
+                TelnetResult(VersionRelation.LOWER_THAN, null)
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.INCOMPATIBLE, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun tryUseTokenCache_noTokenAndTelnetNull_setsDisconnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns false
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns null
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.DISCONNECTED, capturedInfo.captured.connectState)
+        }
+
+    @Test
+    fun tryUseTokenCache_noConnectHostAddress_setsDisconnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createSyncRuntimeInfo(
+                    connectState = SyncState.CONNECTING,
+                    connectHostAddress = null,
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns false
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns null
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.DISCONNECTED, capturedInfo.captured.connectState)
+        }
+
+    // ========== E. trustByBearerToken ==========
+
+    @Test
+    fun trustByBearerToken_unverifiedAndTrustSucceeds_callbackTrueAndConnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.syncClientApi.trust(any(), any(), any(), any()) } returns SuccessResult(true)
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+            coEvery { deps.syncInfoFactory.createSyncInfo(any()) } returns SyncTestFixtures.createSyncInfo()
+            coEvery { deps.networkInterfaceService.getCurrentUseNetworkInterfaces() } returns emptyList()
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            var callbackResult: Boolean? = null
+            resolver.emitEvent(
+                SyncEvent.TrustByBearerToken(syncRuntimeInfo, QrBearerToken(123456)) { callbackResult = it },
+            )
+
+            assertEquals(true, callbackResult)
+            assertEquals(SyncState.CONNECTED, capturedInfo.captured.connectState)
+            verify { deps.ratingPromptManager.trackSignificantAction() }
+        }
+
+    @Test
+    fun trustByBearerToken_unverifiedAndTrustFails_callbackFalse() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.syncClientApi.trust(any(), any(), any(), any()) } returns
+                FailureResult(PasteException(StandardErrorCode.TOKEN_INVALID.toErrorCode(), "invalid"))
+
+            var callbackResult: Boolean? = null
+            resolver.emitEvent(
+                SyncEvent.TrustByBearerToken(syncRuntimeInfo, QrBearerToken(123456)) { callbackResult = it },
+            )
+
+            assertEquals(false, callbackResult)
+        }
+
+    @Test
+    fun trustByBearerToken_notUnverified_callbackFalse() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectedSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+
+            var callbackResult: Boolean? = null
+            resolver.emitEvent(
+                SyncEvent.TrustByBearerToken(syncRuntimeInfo, QrBearerToken(123456)) { callbackResult = it },
+            )
+
+            assertEquals(false, callbackResult)
+        }
+
+    @Test
+    fun trustByBearerToken_unverifiedNoConnectHostAddress_callbackFalse() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo =
+                createSyncRuntimeInfo(
+                    connectState = SyncState.UNVERIFIED,
+                    connectHostAddress = null,
+                )
+
+            deps.stubDbRead(syncRuntimeInfo)
+
+            var callbackResult: Boolean? = null
+            resolver.emitEvent(
+                SyncEvent.TrustByBearerToken(syncRuntimeInfo, QrBearerToken(123456)) { callbackResult = it },
+            )
+
+            assertEquals(false, callbackResult)
+        }
+
+    @Test
+    fun resolveUnverified_cryptoKeyAddedByPairing_authenticatesAndConnects() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(syncRuntimeInfo.appInstanceId) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.CONNECTED, capturedInfo.captured.connectState)
+            coVerify { deps.syncClientApi.heartbeat(any(), syncRuntimeInfo.appInstanceId, any()) }
+        }
+
+    // ========== F. trustBySasCode ==========
+
+    @Test
+    fun trustBySasCode_matchingCode_confirmsAndConnects() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+            val localKey = byteArrayOf(1, 2, 3)
+            val remoteKey = byteArrayOf(4, 5, 6)
+            val sasCode = CryptographyUtils.computeSAS(localKey, remoteKey)
+            val response = createKeyExchangeResponse(remoteKey)
+            val secureKeyPair = mockk<SecureKeyPair>()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            every { deps.secureStore.secureKeyPair } returns secureKeyPair
+            coEvery { secureKeyPair.getCryptPublicKeyBytes(any()) } returns localKey
+            coEvery { deps.syncClientApi.exchangeKeys(any(), any(), any()) } returns SuccessResult(response)
+            coEvery { deps.syncClientApi.trustV2Confirm(any(), any(), any()) } returns SuccessResult(true)
+            coEvery { deps.syncInfoFactory.createSyncInfo(any()) } returns SyncTestFixtures.createSyncInfo()
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            var callbackResult: Boolean? = null
+            resolver.emitEvent(
+                SyncEvent.TrustBySasCode(syncRuntimeInfo, SasCode(sasCode)) { callbackResult = it },
+            )
+
+            assertEquals(true, callbackResult)
+            assertEquals(SyncState.CONNECTED, capturedInfo.captured.connectState)
+            coVerify { deps.syncClientApi.trustV2Confirm(syncRuntimeInfo.appInstanceId, any(), any()) }
+            coVerify { deps.secureStore.saveCryptPublicKey(syncRuntimeInfo.appInstanceId, remoteKey) }
+            // The confirm consumed the responder's exchange: the ledger record
+            // must be cleared so a later dialog dismissal cancels nothing.
+            assertNull(deps.pendingExchangeLedger.current(syncRuntimeInfo.appInstanceId))
+            verify { deps.ratingPromptManager.trackSignificantAction() }
+        }
+
+    @Test
+    fun trustBySasCode_mismatch_doesNotConfirmOrSaveKey() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+            val localKey = byteArrayOf(1, 2, 3)
+            val remoteKey = byteArrayOf(4, 5, 6)
+            val matchingCode = CryptographyUtils.computeSAS(localKey, remoteKey)
+            val secureKeyPair = mockk<SecureKeyPair>()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            every { deps.secureStore.secureKeyPair } returns secureKeyPair
+            coEvery { secureKeyPair.getCryptPublicKeyBytes(any()) } returns localKey
+            coEvery { deps.syncClientApi.exchangeKeys(any(), any(), any()) } returns
+                SuccessResult(createKeyExchangeResponse(remoteKey))
+
+            var callbackResult: Boolean? = null
+            resolver.emitEvent(
+                SyncEvent.TrustBySasCode(syncRuntimeInfo, SasCode((matchingCode + 1) % 1_000_000)) {
+                    callbackResult = it
+                },
+            )
+
+            assertEquals(false, callbackResult)
+            coVerify(exactly = 0) { deps.syncClientApi.trustV2Confirm(any(), any(), any()) }
+            coVerify(exactly = 0) { deps.secureStore.saveCryptPublicKey(any(), any()) }
+            // The mismatched exchange still exists on the responder: keep its
+            // ledger record so abandoning the dialog can cancel it.
+            assertNotNull(deps.pendingExchangeLedger.current(syncRuntimeInfo.appInstanceId))
+        }
+
+    @Test
+    fun trustBySasCode_exchangeFailure_returnsFalseWithoutConfirming() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.syncClientApi.exchangeKeys(any(), any(), any()) } returns
+                FailureResult(PasteException(StandardErrorCode.EXCHANGE_FAIL.toErrorCode(), "exchange failed"))
+
+            var callbackResult: Boolean? = null
+            resolver.emitEvent(
+                SyncEvent.TrustBySasCode(syncRuntimeInfo, SasCode(123456)) { callbackResult = it },
+            )
+
+            assertEquals(false, callbackResult)
+            coVerify(exactly = 0) { deps.syncClientApi.trustV2Confirm(any(), any(), any()) }
+        }
+
+    @Test
+    fun trustBySasCode_confirmFailure_returnsFalseWithoutSavingKey() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+            val localKey = byteArrayOf(1, 2, 3)
+            val remoteKey = byteArrayOf(4, 5, 6)
+            val sasCode = CryptographyUtils.computeSAS(localKey, remoteKey)
+            val secureKeyPair = mockk<SecureKeyPair>()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            every { deps.secureStore.secureKeyPair } returns secureKeyPair
+            coEvery { secureKeyPair.getCryptPublicKeyBytes(any()) } returns localKey
+            coEvery { deps.syncClientApi.exchangeKeys(any(), any(), any()) } returns
+                SuccessResult(createKeyExchangeResponse(remoteKey))
+            coEvery { deps.syncClientApi.trustV2Confirm(any(), any(), any()) } returns
+                FailureResult(PasteException(StandardErrorCode.TRUST_FAIL.toErrorCode(), "confirm failed"))
+
+            var callbackResult: Boolean? = null
+            resolver.emitEvent(
+                SyncEvent.TrustBySasCode(syncRuntimeInfo, SasCode(sasCode)) { callbackResult = it },
+            )
+
+            assertEquals(false, callbackResult)
+            coVerify(exactly = 0) { deps.secureStore.saveCryptPublicKey(any(), any()) }
+        }
+
+    @Test
+    fun cancelPairing_dispatchesToSyncDeviceManager() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+
+            resolver.emitEvent(SyncEvent.CancelPairing(syncRuntimeInfo, generation = 123L))
+
+            coVerify(exactly = 1) { deps.syncDeviceManager.cancelPairing(syncRuntimeInfo, 123L) }
+        }
+
+    // ========== G. Event dispatch and callback ==========
+
+    @Test
+    fun resolve_connecting_callsAuthenticateNotSwitchHost() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns false
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns null
+
+            val capturedInfo = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(capturedInfo)) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            // resolveConnecting path is taken, which calls telnet (not switchHost)
+            coVerify(exactly = 0) { deps.telnetHelper.switchHost(any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun forceResolve_callsRefreshThenResolve() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo(connectState = SyncState.DISCONNECTED)
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns null
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(any()) } returns "test-app-1"
+
+            val callback = createTestCallback()
+            resolver.emitEvent(SyncEvent.ForceResolve(syncRuntimeInfo, callback))
+
+            verify { deps.pasteBonjourService.refreshTarget(any(), any()) }
+            coVerify { deps.telnetHelper.switchHost(any(), any(), any(), any()) }
+        }
+
+    @Test
+    fun refreshSyncInfo_delegatesToBonjour() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val hostInfoList = listOf(HostInfo(24, "192.168.1.100"))
+
+            resolver.emitEvent(SyncEvent.RefreshSyncInfo("test-app-1", hostInfoList))
+
+            verify { deps.pasteBonjourService.refreshTarget("test-app-1", hostInfoList) }
+        }
+
+    @Test
+    fun callbackEvent_onCompleteCalledEvenOnException() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo()
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } throws RuntimeException("test error")
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(any()) } returns "test-app-1"
+
+            var onCompleteCalled = false
+            val callback =
+                ResolveCallback(
+                    updateVersionRelation = {},
+                    onComplete = { onCompleteCalled = true },
+                )
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertTrue(onCompleteCalled)
+        }
+
+    @Test
+    fun processEvent_cancellationException_propagatesNotSwallowed() =
+        runTest {
+            // Regression guard for the resolver infinite-loop: a CancellationException
+            // raised while resolving (e.g. scope teardown / shutdown) MUST propagate out
+            // of processEvent instead of being caught-and-logged. Swallowing it broke
+            // structured-concurrency cancellation and let buffered Resolve events
+            // re-process endlessly ("Failed to process event" flood).
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo(connectState = SyncState.DISCONNECTED)
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } throws
+                CancellationException("scope cancelled")
+
+            assertFailsWith<CancellationException> {
+                resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+            }
+        }
+
+    @Test
+    fun processEvent_nonCancellationException_swallowedAndLogged() =
+        runTest {
+            // Counterpart to the cancellation test: ordinary failures must still be
+            // caught (not propagated), so one bad device cannot tear down the pipeline.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo(connectState = SyncState.DISCONNECTED)
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } throws
+                RuntimeException("boom")
+
+            // Should NOT throw — the runtime exception is swallowed.
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+        }
+
+    @Test
+    fun callbackEvent_updatesVersionRelation() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo()
+            val hostInfo = HostInfo(24, "192.168.1.100")
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns
+                Pair(hostInfo, TelnetResult(VersionRelation.EQUAL_TO, null))
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(any()) } returns "test-app-1"
+
+            var capturedRelation: VersionRelation? = null
+            val callback =
+                ResolveCallback(
+                    updateVersionRelation = { capturedRelation = it },
+                    onComplete = {},
+                )
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(VersionRelation.EQUAL_TO, capturedRelation)
+        }
+
+    // ========== E2. polling backoff settlement (R2-06-001) ==========
+
+    private class FailureCounter {
+        var calls = 0
+        val callback = ResolveCallback(updateVersionRelation = {}, markPollFailure = { calls++ })
+    }
+
+    private fun TestDeps.stubUnreachable() {
+        coEvery { telnetHelper.telnet(any(), any(), any()) } returns null
+        coEvery { telnetHelper.switchHost(any(), any(), any(), any()) } returns null
+    }
+
+    @Test
+    fun pollingResolve_disconnectedNoReachableHost_marksPollFailureOnce() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo()
+            deps.stubDbRead(syncRuntimeInfo)
+            deps.stubUnreachable()
+
+            val counter = FailureCounter()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, counter.callback))
+
+            assertEquals(1, counter.calls)
+        }
+
+    @Test
+    fun pollingResolve_connectingHeartbeatRefused_marksPollFailureOnce() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectingSyncRuntimeInfo()
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns ConnectionRefused
+
+            val captured = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(captured)) } returns
+                syncRuntimeInfo.appInstanceId
+
+            val counter = FailureCounter()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, counter.callback))
+
+            assertEquals(SyncState.DISCONNECTED, captured.captured.connectState)
+            assertEquals(1, counter.calls)
+        }
+
+    @Test
+    fun pollingResolve_connectedHeartbeatAndRediscoveryFail_countsOneFailure() =
+        runTest {
+            // verifyConnection falls through to discoverAndConnect in the same pass;
+            // the two failed stages must still settle as a single poll failure.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createConnectedSyncRuntimeInfo()
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.isConnected(any()) } returns false
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns ConnectionRefused
+            deps.stubUnreachable()
+
+            val counter = FailureCounter()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, counter.callback))
+
+            assertEquals(1, counter.calls)
+        }
+
+    @Test
+    fun pollingResolve_reconnects_doesNotMarkPollFailure() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo()
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns null
+            coEvery { deps.telnetHelper.switchHost(any(), any(), any(), any()) } returns
+                Pair(HostInfo(24, "192.168.1.100"), TelnetResult(VersionRelation.EQUAL_TO, null))
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns true
+            coEvery { deps.syncClientApi.heartbeat(any(), any(), any()) } returns
+                SuccessResult(VersionRelation.EQUAL_TO)
+
+            val counter = FailureCounter()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, counter.callback))
+
+            assertEquals(0, counter.calls)
+        }
+
+    @Test
+    fun pollingResolve_unverifiedStillReachable_doesNotMarkPollFailure() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.secureStore.existCryptPublicKey(any()) } returns false
+            coEvery { deps.telnetHelper.telnet(any(), any(), any()) } returns
+                TelnetResult(VersionRelation.EQUAL_TO, null)
+
+            val counter = FailureCounter()
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, counter.callback))
+
+            assertEquals(0, counter.calls)
+        }
+
+    @Test
+    fun forceResolve_unreachable_doesNotMarkPollFailure() =
+        runTest {
+            // Discovery/UI-driven refreshes must not escalate the polling backoff.
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createSyncRuntimeInfo()
+            deps.stubDbRead(syncRuntimeInfo)
+            deps.stubUnreachable()
+
+            val counter = FailureCounter()
+            resolver.emitEvent(SyncEvent.ForceResolve(syncRuntimeInfo, counter.callback))
+
+            assertEquals(0, counter.calls)
+        }
+
+    // ========== F. resolveExtension ==========
+
+    @Test
+    fun resolveExtension_connected_probeSucceeds_staysConnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createExtensionSyncRuntimeInfo(connectState = SyncState.CONNECTED)
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.probe(syncRuntimeInfo.appInstanceId) } returns true
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            coVerify(exactly = 0) { deps.syncRuntimeInfoDao.updateConnectInfo(any()) }
+        }
+
+    @Test
+    fun resolveExtension_connected_probeFails_setsDisconnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createExtensionSyncRuntimeInfo(connectState = SyncState.CONNECTED)
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.probe(syncRuntimeInfo.appInstanceId) } returns false
+
+            val captured = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(captured)) } returns
+                syncRuntimeInfo.appInstanceId
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, createTestCallback()))
+
+            assertEquals(SyncState.DISCONNECTED, captured.captured.connectState)
+        }
+
+    @Test
+    fun resolveExtension_disconnected_wsConnected_setsConnected() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createExtensionSyncRuntimeInfo(connectState = SyncState.DISCONNECTED)
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.probe(syncRuntimeInfo.appInstanceId) } returns true
+
+            val captured = slot<SyncRuntimeInfo>()
+            coEvery { deps.syncRuntimeInfoDao.updateConnectInfo(capture(captured)) } returns
+                syncRuntimeInfo.appInstanceId
+
+            var capturedRelation: VersionRelation? = null
+            val callback =
+                ResolveCallback(
+                    updateVersionRelation = { capturedRelation = it },
+                )
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(SyncState.CONNECTED, captured.captured.connectState)
+            assertEquals(VersionRelation.EQUAL_TO, capturedRelation)
+        }
+
+    @Test
+    fun resolveExtension_disconnected_wsNotConnected_invokesMarkPollFailure() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createExtensionSyncRuntimeInfo(connectState = SyncState.DISCONNECTED)
+
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery { deps.wsSessionManager.probe(syncRuntimeInfo.appInstanceId) } returns false
+
+            var failureCalls = 0
+            val callback =
+                ResolveCallback(
+                    updateVersionRelation = {},
+                    markPollFailure = { failureCalls++ },
+                )
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(1, failureCalls)
+            coVerify(exactly = 0) { deps.syncRuntimeInfoDao.updateConnectInfo(any()) }
+        }
+
+    @Test
+    fun resolveExtension_unexpectedState_noOp() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createExtensionSyncRuntimeInfo(connectState = SyncState.UNVERIFIED)
+
+            deps.stubDbRead(syncRuntimeInfo)
+
+            var failureCalls = 0
+            val callback =
+                ResolveCallback(
+                    updateVersionRelation = {},
+                    markPollFailure = { failureCalls++ },
+                )
+
+            resolver.emitEvent(SyncEvent.Resolve(syncRuntimeInfo, callback))
+
+            assertEquals(0, failureCalls)
+            coVerify(exactly = 0) { deps.syncRuntimeInfoDao.updateConnectInfo(any()) }
+            coVerify(exactly = 0) { deps.wsSessionManager.probe(any()) }
+        }
+
+    @Test
+    fun showPairingCode_completesAfterRemoteRequestIsProcessed() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+            val event = SyncEvent.ShowPairingCode(syncRuntimeInfo)
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery {
+                deps.syncDeviceManager.showPairingCode(syncRuntimeInfo)
+            } returns ShowPairingCodeResult.SHOWN
+
+            resolver.emitEvent(event)
+
+            coVerify(exactly = 1) { deps.syncDeviceManager.showPairingCode(syncRuntimeInfo) }
+            assertEquals(ShowPairingCodeResult.SHOWN, event.completionSignal.await())
+        }
+
+    @Test
+    fun showPairingCode_reportsNotAcceptingWhenRemoteWindowWasNotOpened() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+            val event = SyncEvent.ShowPairingCode(syncRuntimeInfo)
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery {
+                deps.syncDeviceManager.showPairingCode(syncRuntimeInfo)
+            } returns ShowPairingCodeResult.NOT_ACCEPTING
+
+            resolver.emitEvent(event)
+
+            assertEquals(ShowPairingCodeResult.NOT_ACCEPTING, event.completionSignal.await())
+        }
+
+    @Test
+    fun showPairingCode_resolverCancellationCompletesUnavailableWithoutCancellingCaller() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+            val event = SyncEvent.ShowPairingCode(syncRuntimeInfo)
+            deps.stubDbRead(syncRuntimeInfo)
+            coEvery {
+                deps.syncDeviceManager.showPairingCode(syncRuntimeInfo)
+            } throws CancellationException("resolver cancelled")
+
+            assertFailsWith<CancellationException> {
+                resolver.emitEvent(event)
+            }
+
+            assertEquals(ShowPairingCodeResult.UNAVAILABLE, event.completionSignal.await())
+        }
+
+    @Test
+    fun showPairingCode_reportsIncompleteWhenPeerRecordDisappears() =
+        runTest {
+            val deps = TestDeps()
+            val resolver = deps.createResolver()
+            val syncRuntimeInfo = createUnverifiedSyncRuntimeInfo()
+            val event = SyncEvent.ShowPairingCode(syncRuntimeInfo)
+            coEvery {
+                deps.syncRuntimeInfoDao.getSyncRuntimeInfo(syncRuntimeInfo.appInstanceId)
+            } returns null
+
+            resolver.emitEvent(event)
+
+            coVerify(exactly = 0) { deps.syncDeviceManager.showPairingCode(any()) }
+            assertEquals(ShowPairingCodeResult.UNAVAILABLE, event.completionSignal.await())
+        }
+
+    private fun extensionPlatform(): Platform =
+        Platform(
+            name = Platform.CHROME_EXTENSION,
+            arch = "any",
+            bitMode = 64,
+            version = "1.0.0",
+        )
+
+    private fun createExtensionSyncRuntimeInfo(
+        appInstanceId: String = "chrome-ext-1",
+        connectState: Int = SyncState.CONNECTED,
+    ): SyncRuntimeInfo =
+        createSyncRuntimeInfo(
+            appInstanceId = appInstanceId,
+            platform = extensionPlatform(),
+            connectState = connectState,
+        )
+
+    private fun createTestCallback(): ResolveCallback =
+        ResolveCallback(
+            updateVersionRelation = {},
+            onComplete = {},
+        )
+
+    private fun createKeyExchangeResponse(remoteKey: ByteArray): KeyExchangeResponse =
+        KeyExchangeResponse(
+            signPublicKey = byteArrayOf(7, 8, 9),
+            cryptPublicKey = remoteKey,
+            timestamp = 1L,
+            signature = byteArrayOf(10, 11, 12),
+        )
+}

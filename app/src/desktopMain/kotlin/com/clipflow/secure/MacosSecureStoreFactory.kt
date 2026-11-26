@@ -1,0 +1,81 @@
+package com.clipflow.secure
+
+import com.clipflow.app.AppFileType
+import com.clipflow.app.AppInfo
+import com.clipflow.db.secure.SecureIO
+import com.clipflow.path.AppPathProvider
+import com.clipflow.platform.macos.MacosKeychainHelper
+import com.clipflow.presist.FilePersist
+import com.clipflow.utils.CryptographyUtils
+import com.clipflow.utils.EncryptUtils
+import com.clipflow.utils.getAppEnvUtils
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.runBlocking
+
+class MacosSecureStoreFactory(
+    private val appInfo: AppInfo,
+    appPathProvider: AppPathProvider,
+    private val secureKeyPairSerializer: SecureKeyPairSerializer,
+    private val secureIO: SecureIO,
+) : SecureStoreFactory {
+
+    private val logger = KotlinLogging.logger {}
+
+    private val appEnvUtils = getAppEnvUtils()
+
+    private val filePersist =
+        FilePersist.createOneFilePersist(
+            appPathProvider.resolve("secure.data", AppFileType.ENCRYPT),
+        )
+
+    override fun createSecureStore(): SecureStore =
+        runBlocking {
+            val service = "clipflow-${appEnvUtils.getCurrentAppEnv().name}-${appInfo.appInstanceId}"
+            val file = filePersist.path.toFile()
+            if (file.exists()) {
+                logger.info { "Found secureKeyPair encrypt file" }
+                val bytes = file.readBytes()
+                val password = MacosKeychainHelper.getPassword(service, appInfo.userName)
+                password?.let {
+                    logger.info { "Found password in keychain by $service ${appInfo.userName}" }
+                    runCatching {
+                        val secretKey = EncryptUtils.stringToSecretKey(it)
+                        val decryptData = EncryptUtils.decryptData(secretKey, bytes)
+                        val secureKeyPair = secureKeyPairSerializer.decodeSecureKeyPair(decryptData)
+                        return@runBlocking GeneralSecureStore(secureKeyPair, secureKeyPairSerializer, secureIO)
+                    }.onFailure { e ->
+                        logger.error(e) { "Decrypt secureKeyPair error" }
+                    }
+                }
+
+                if (file.delete()) {
+                    logger.info { "Delete secureKeyPair encrypt file" }
+                }
+            } else {
+                logger.info { "Not found secureKeyPair encrypt file" }
+            }
+
+            logger.info { "Generate secureKeyPair" }
+            val secureKeyPair = CryptographyUtils.generateSecureKeyPair()
+            val data = secureKeyPairSerializer.encodeSecureKeyPair(secureKeyPair)
+            val password = MacosKeychainHelper.getPassword(service, appInfo.userName)
+
+            val secretKey =
+                password?.let {
+                    logger.info { "Found password in keychain by $service ${appInfo.userName}" }
+                    EncryptUtils.stringToSecretKey(it)
+                } ?: run {
+                    logger.info { "Not found password in keychain by $service ${appInfo.userName}" }
+                    val secretKey = EncryptUtils.generateAESKey()
+                    MacosKeychainHelper.setPassword(
+                        service,
+                        appInfo.userName,
+                        EncryptUtils.secretKeyToString(secretKey),
+                    )
+                    secretKey
+                }
+            val encryptData = EncryptUtils.encryptData(secretKey, data)
+            filePersist.saveBytes(encryptData)
+            GeneralSecureStore(secureKeyPair, secureKeyPairSerializer, secureIO)
+        }
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${1:-CrossPaste/crosspaste-desktop}"
+REPO="${1:-ClipFlow/clipflow-desktop}"
 cd "$(dirname "$0")/../.."
 
 logins=()

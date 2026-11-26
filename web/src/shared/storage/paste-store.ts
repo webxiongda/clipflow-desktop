@@ -4,7 +4,7 @@ import { PasteState } from "@/shared/models/paste-data";
 import { PASTE_TYPE_FROM_INT } from "@/shared/models/paste-item";
 import type { PasteItem } from "@/shared/models/paste-item";
 
-const DB_NAME = "crosspaste";
+const DB_NAME = "clipflow";
 const STORE_NAME = "pastes";
 const DB_VERSION = 1;
 const MAX_ITEMS = 100;

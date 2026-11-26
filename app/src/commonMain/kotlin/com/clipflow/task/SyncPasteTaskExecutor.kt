@@ -1,0 +1,416 @@
+package com.clipflow.task
+
+import com.clipflow.app.AppControl
+import com.clipflow.app.AppInfo
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.db.paste.PasteDao
+import com.clipflow.db.sync.SyncState
+import com.clipflow.db.task.PasteTask
+import com.clipflow.db.task.SyncExtraInfo
+import com.clipflow.db.task.TaskType
+import com.clipflow.dto.notice.OversizePasteNotice
+import com.clipflow.exception.StandardErrorCode
+import com.clipflow.net.VersionRelation
+import com.clipflow.net.clientapi.ClientApiResult
+import com.clipflow.net.clientapi.FailureResult
+import com.clipflow.net.clientapi.PasteClientApi
+import com.clipflow.net.clientapi.SuccessResult
+import com.clipflow.net.clientapi.createFailureResult
+import com.clipflow.net.filter
+import com.clipflow.net.ws.WS_MAX_FRAME_SIZE
+import com.clipflow.net.ws.WS_MAX_PAYLOAD_SIZE
+import com.clipflow.net.ws.WsEnvelope
+import com.clipflow.net.ws.WsMessageType
+import com.clipflow.net.ws.WsPayloadSendResult
+import com.clipflow.net.ws.WsSessionManager
+import com.clipflow.paste.PasteData
+import com.clipflow.paste.item.PasteFiles
+import com.clipflow.secure.SecureStore
+import com.clipflow.sync.SyncHandler
+import com.clipflow.sync.SyncManager
+import com.clipflow.sync.isSyncEnabledForType
+import com.clipflow.utils.HostAndPort
+import com.clipflow.utils.TaskUtils
+import com.clipflow.utils.buildUrl
+import com.clipflow.utils.getJsonUtils
+import com.clipflow.utils.ioDispatcher
+import com.clipflow.utils.namedScope
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlin.collections.filter
+
+class SyncPasteTaskExecutor(
+    private val appControl: AppControl,
+    private val appInfo: AppInfo,
+    private val configManager: CommonConfigManager,
+    private val pasteDao: PasteDao,
+    private val pasteClientApi: PasteClientApi,
+    private val secureStore: SecureStore,
+    private val syncManager: SyncManager,
+    private val wsSessionManager: WsSessionManager,
+    private val wsSingleFramePayloadLimit: Long = WS_MAX_FRAME_SIZE,
+    private val wsChunkedPayloadLimit: Long = WS_MAX_PAYLOAD_SIZE,
+) : SingleTypeTaskExecutor {
+
+    private val logger = KotlinLogging.logger {}
+
+    private val jsonUtils = getJsonUtils()
+
+    private val ioScope = namedScope(ioDispatcher, "SyncPasteTaskExecutor")
+
+    override val taskType: Int = TaskType.SYNC_PASTE_TASK
+
+    override suspend fun doExecuteTask(pasteTask: PasteTask): PasteTaskResult {
+        val syncExtraInfo: SyncExtraInfo = TaskUtils.getExtraInfo(pasteTask, SyncExtraInfo::class)
+
+        val pasteDataId =
+            pasteTask.pasteDataId
+                ?: return createEmptyResult(syncExtraInfo)
+
+        return pasteDao.getNoDeletePasteData(pasteDataId)?.let { pasteData ->
+            // Check if sync is enabled for this paste type
+            if (!isSyncEnabledForPasteType(pasteData)) {
+                logger.debug { "Sync disabled for paste type: ${pasteData.getType().name}" }
+                return@let createEmptyResult(syncExtraInfo)
+            }
+
+            val syncResults = executeSyncTasks(pasteData, syncExtraInfo)
+            processResults(syncResults, syncExtraInfo, pasteTask.modifyTime)
+        } ?: run {
+            createEmptyResult(syncExtraInfo)
+        }
+    }
+
+    private fun isSyncEnabledForPasteType(pasteData: PasteData): Boolean =
+        configManager.config.value.isSyncEnabledForType(pasteData.getType())
+
+    private fun createEmptyResult(syncExtraInfo: SyncExtraInfo): PasteTaskResult {
+        syncExtraInfo.syncFails.clear()
+        return SuccessPasteTaskResult(jsonUtils.JSON.encodeToString(syncExtraInfo))
+    }
+
+    private suspend fun executeSyncTasks(
+        pasteData: PasteData,
+        syncExtraInfo: SyncExtraInfo,
+    ): Map<String, ClientApiResult> {
+        val deferredResults: MutableList<Deferred<Pair<String, ClientApiResult>>> = mutableListOf()
+
+        val candidates = getEligibleSyncHandlers(syncExtraInfo)
+        // Every candidate of this round counts as seen, including ones already
+        // reached in an earlier attempt, so a receiver never relays back to them.
+        val outgoingSeen =
+            syncExtraInfo.seenAppInstanceIds +
+                syncExtraInfo.appInstanceId +
+                appInfo.appInstanceId +
+                candidates.keys
+        val targets =
+            candidates.filterKeys { key ->
+                syncExtraInfo.syncFails.isEmpty() || syncExtraInfo.syncFails.contains(key)
+            }
+        for (handler in targets) {
+            val deferred = createSyncTask(handler.key, handler.value, pasteData, outgoingSeen)
+            deferredResults.add(deferred)
+        }
+
+        return deferredResults.associate { it.await() }
+    }
+
+    // Only CONNECTED handlers are eligible: a stale row left behind by a peer whose
+    // appInstanceId changed keeps the last known address, so pushing to DISCONNECTED
+    // handlers delivers duplicates to whoever now owns that address (#4894). A peer
+    // that reconnects catches up via the pull cursor.
+    private suspend fun getEligibleSyncHandlers(syncExtraInfo: SyncExtraInfo): Map<String, SyncHandler> =
+        if (syncExtraInfo.appInstanceId == appInfo.appInstanceId) {
+            syncManager.getSyncHandlers().filter { (key, handler) ->
+                handler.currentSyncRuntimeInfo.allowSend &&
+                    handler.currentSyncRuntimeInfo.connectState == SyncState.CONNECTED &&
+                    handler.currentVersionRelation == VersionRelation.EQUAL_TO &&
+                    (
+                        syncExtraInfo.targetAppInstanceIds?.contains(key) != false
+                    )
+            }
+        } else {
+            syncManager.getSyncHandler(syncExtraInfo.appInstanceId)?.let { handler ->
+                val sourceIsExtension = handler.currentSyncRuntimeInfo.platform.isExtension()
+                val connectHostInfo = handler.getConnectHostInfo()
+                if (sourceIsExtension || connectHostInfo != null) {
+                    syncManager.getSyncHandlers().filter { (key, targetHandler) ->
+                        if (key != syncExtraInfo.appInstanceId && key !in syncExtraInfo.seenAppInstanceIds) {
+                            val isEligible =
+                                targetHandler.currentSyncRuntimeInfo.allowSend &&
+                                    targetHandler.currentSyncRuntimeInfo.connectState == SyncState.CONNECTED &&
+                                    targetHandler.currentVersionRelation == VersionRelation.EQUAL_TO
+                            if (!isEligible) {
+                                false
+                            } else if (
+                                sourceIsExtension ||
+                                targetHandler.currentSyncRuntimeInfo.platform.isExtension()
+                            ) {
+                                // Extension devices use WebSocket — no host address to filter
+                                true
+                            } else {
+                                val address = targetHandler.getConnectHostAddress()
+                                address != null && connectHostInfo != null && !connectHostInfo.filter(address)
+                            }
+                        } else {
+                            false
+                        }
+                    }
+                } else {
+                    mapOf()
+                }
+            } ?: mapOf()
+        }
+
+    private fun createSyncTask(
+        handlerKey: String,
+        handler: SyncHandler,
+        pasteData: PasteData,
+        seenAppInstanceIds: Set<String>,
+    ): Deferred<Pair<String, ClientApiResult>> =
+        ioScope.async {
+            runCatching {
+                val result = syncPasteToTarget(handlerKey, handler, pasteData, seenAppInstanceIds)
+
+                if (result is SuccessResult) {
+                    appControl.completeSendOperation()
+                }
+
+                Pair(handlerKey, result)
+            }.getOrElse {
+                createExceptionResult(handlerKey)
+            }
+        }
+
+    private fun createExceptionResult(handlerKey: String): Pair<String, ClientApiResult> =
+        Pair(
+            handlerKey,
+            createFailureResult(
+                StandardErrorCode.SYNC_PASTE_ERROR,
+                "Failed to sync paste to $handlerKey",
+            ),
+        )
+
+    companion object {
+        /** Chrome extension per-file size limit (1MB). */
+        const val EXTENSION_MAX_FILE_SIZE: Long = 1L * 1024 * 1024
+
+        /** Chrome extension total files size limit (32MB). */
+        const val EXTENSION_MAX_TOTAL_FILE_SIZE: Long = 32L * 1024 * 1024
+    }
+
+    private suspend fun syncPasteToTarget(
+        handlerKey: String,
+        handler: SyncHandler,
+        pasteData: PasteData,
+        seenAppInstanceIds: Set<String>,
+    ): ClientApiResult {
+        val syncRuntimeInfo = handler.currentSyncRuntimeInfo
+        val port = syncRuntimeInfo.port
+        val targetAppInstanceId = syncRuntimeInfo.appInstanceId
+
+        if (!appControl.isSendEnabled()) {
+            return createFailureResult(
+                StandardErrorCode.SYNC_NOT_ALLOW_SEND_BY_APP,
+                "Failed to send paste to $handlerKey",
+            )
+        }
+
+        // Extension devices have file size limits — skip file-type pastes that exceed them
+        if (syncRuntimeInfo.platform.isExtension() && pasteData.isFileType()) {
+            val pasteFiles = pasteData.getPasteItem(PasteFiles::class)
+            val oversizeNotice =
+                if (pasteFiles == null) null else detectExtensionOversize(pasteFiles)
+            if (pasteFiles == null || oversizeNotice != null) {
+                logger.info {
+                    "Skipping file-type paste sync to extension $handlerKey: " +
+                        if (pasteFiles == null) {
+                            "unable to resolve PasteFiles for size check"
+                        } else {
+                            "file size exceeds extension limit (reason=${oversizeNotice?.reason})"
+                        }
+                }
+                if (oversizeNotice != null) {
+                    notifyExtensionOversize(targetAppInstanceId, oversizeNotice)
+                }
+                return SuccessResult()
+            }
+        }
+
+        // 1. Extension targets always use WebSocket
+        if (syncRuntimeInfo.platform.isExtension()) {
+            return trySendViaWebSocket(targetAppInstanceId, pasteData, isExtensionTarget = true)
+                ?: createFailureResult(
+                    StandardErrorCode.SYNC_PASTE_ERROR,
+                    "WebSocket send failed for extension $handlerKey",
+                )
+        }
+
+        // 2. Regular devices prefer HTTP (supports concurrent chunk transfer for large files)
+        val hostAddress = handler.getConnectHostAddress()
+        if (hostAddress != null) {
+            val hostAndPort = HostAndPort(hostAddress, port)
+            return pasteClientApi.sendPaste(
+                pasteData,
+                targetAppInstanceId,
+                seenAppInstanceIds,
+            ) {
+                buildUrl(hostAndPort)
+            }
+        }
+
+        // 3. No host address — fall back to WebSocket
+        return trySendViaWebSocket(targetAppInstanceId, pasteData, isExtensionTarget = false, seenAppInstanceIds)
+            ?: createFailureResult(
+                StandardErrorCode.CANT_GET_SYNC_ADDRESS,
+                "Failed to get connect host address by $handlerKey and WebSocket unavailable",
+            )
+    }
+
+    private suspend fun trySendViaWebSocket(
+        targetAppInstanceId: String,
+        pasteData: PasteData,
+        isExtensionTarget: Boolean,
+        // Extensions never relay, so they are not sent one
+        seenAppInstanceIds: Set<String> = emptySet(),
+    ): ClientApiResult? =
+        runCatching {
+            val jsonBytes = getJsonUtils().JSON.encodeToString(pasteData).encodeToByteArray()
+            val encrypt = configManager.getCurrentConfig().enableEncryptSync
+            val payload =
+                if (encrypt) {
+                    secureStore.getMessageProcessor(targetAppInstanceId).encrypt(jsonBytes)
+                } else {
+                    jsonBytes
+                }
+            val envelope =
+                WsEnvelope(
+                    type = WsMessageType.PASTE_PUSH,
+                    payload = payload,
+                    encrypted = encrypt,
+                    relaySeen = seenAppInstanceIds,
+                )
+            // Native pairing v2 deliberately keeps the 1 MiB WebSocket payload
+            // contract; file bytes use HTTPS. Pairing v3 opts into the larger
+            // logical-message cap through chunking. Extension clients remain
+            // single-frame but use the browser-compatible message cap. The
+            // manager selects the limit and sends through one session snapshot,
+            // so a reconnect cannot change capability between those operations.
+            val singleFramePayloadLimit =
+                if (isExtensionTarget) wsChunkedPayloadLimit else wsSingleFramePayloadLimit
+            when (
+                val sendResult =
+                    wsSessionManager.sendPastePush(
+                        appInstanceId = targetAppInstanceId,
+                        envelope = envelope,
+                        singleFramePayloadLimit = singleFramePayloadLimit,
+                        chunkedPayloadLimit = wsChunkedPayloadLimit,
+                    )
+            ) {
+                WsPayloadSendResult.Sent -> SuccessResult()
+                WsPayloadSendResult.Failed -> null // WebSocket send failed, fall back to HTTP
+                is WsPayloadSendResult.Rejected ->
+                    createFailureResult(
+                        StandardErrorCode.SYNC_PASTE_REJECTED_BY_PEER,
+                        "Paste rejected by $targetAppInstanceId: ${sendResult.detail}",
+                    )
+                is WsPayloadSendResult.PayloadTooLarge -> {
+                    logger.warn {
+                        "WS paste push to $targetAppInstanceId rejected: " +
+                            "payload ${sendResult.payloadSize} bytes exceeds limit ${sendResult.payloadLimit}"
+                    }
+                    createFailureResult(
+                        StandardErrorCode.SYNC_PASTE_ERROR,
+                        "Paste payload ${sendResult.payloadSize} bytes exceeds " +
+                            "WebSocket limit for $targetAppInstanceId",
+                    )
+                }
+            }
+        }.onFailure { e ->
+            logger.warn(e) { "WebSocket paste send failed for $targetAppInstanceId, falling back to HTTP" }
+        }.getOrNull()
+
+    /**
+     * Returns a notice describing why [pasteFiles] exceeds the Chrome extension
+     * per-file / total-size limits, or null if it's within bounds.
+     */
+    private fun detectExtensionOversize(pasteFiles: PasteFiles): OversizePasteNotice? {
+        val oversizeFile =
+            pasteFiles.fileInfoTreeMap.entries.firstOrNull { (_, info) ->
+                info.size > EXTENSION_MAX_FILE_SIZE
+            }
+        if (oversizeFile != null) {
+            return OversizePasteNotice(
+                reason = OversizePasteNotice.Reason.FILE_TOO_LARGE,
+                fileName = oversizeFile.key,
+                actualSize = oversizeFile.value.size,
+                sizeLimitBytes = EXTENSION_MAX_FILE_SIZE,
+            )
+        }
+        if (pasteFiles.size > EXTENSION_MAX_TOTAL_FILE_SIZE) {
+            return OversizePasteNotice(
+                reason = OversizePasteNotice.Reason.TOTAL_TOO_LARGE,
+                fileName = null,
+                actualSize = pasteFiles.size,
+                sizeLimitBytes = EXTENSION_MAX_TOTAL_FILE_SIZE,
+            )
+        }
+        return null
+    }
+
+    private suspend fun notifyExtensionOversize(
+        targetAppInstanceId: String,
+        notice: OversizePasteNotice,
+    ) {
+        runCatching {
+            val payload = getJsonUtils().JSON.encodeToString(notice).encodeToByteArray()
+            val envelope =
+                WsEnvelope(
+                    type = WsMessageType.PASTE_REJECTED_OVERSIZE,
+                    payload = payload,
+                )
+            wsSessionManager.send(targetAppInstanceId, envelope)
+        }.onFailure { e ->
+            logger.warn(e) { "Failed to send PASTE_REJECTED_OVERSIZE to $targetAppInstanceId" }
+        }
+    }
+
+    private fun processResults(
+        results: Map<String, ClientApiResult>,
+        syncExtraInfo: SyncExtraInfo,
+        startTime: Long,
+    ): PasteTaskResult {
+        val fails: Map<String, FailureResult> =
+            results
+                .filter { it.value is FailureResult }
+                .mapValues { it.value as FailureResult }
+
+        syncExtraInfo.syncFails.clear()
+
+        return if (fails.isEmpty()) {
+            SuccessPasteTaskResult(jsonUtils.JSON.encodeToString(syncExtraInfo))
+        } else {
+            // Retry decisions are per target: a non-retriable failure (e.g. a stale
+            // row's NOT_MATCH_APP_INSTANCE_ID) only drops its own target from
+            // syncFails, so transient failures on other targets still get retried.
+            val retriableFails = fails.filterValues { !isNonRetriable(it) }
+
+            syncExtraInfo.syncFails.addAll(retriableFails.keys)
+            TaskUtils.createFailurePasteTaskResult(
+                logger = logger,
+                retryHandler = { retriableFails.isNotEmpty() && syncExtraInfo.executionHistories.size < 3 },
+                startTime = startTime,
+                fails = fails.values,
+                extraInfo = syncExtraInfo,
+            )
+        }
+    }
+
+    private fun isNonRetriable(failure: FailureResult): Boolean =
+        failure.exception.match(StandardErrorCode.SYNC_NOT_ALLOW_RECEIVE_BY_APP) ||
+            failure.exception.match(StandardErrorCode.SYNC_NOT_ALLOW_SEND_BY_APP) ||
+            failure.exception.match(StandardErrorCode.DECRYPT_FAIL) ||
+            failure.exception.match(StandardErrorCode.SYNC_PASTE_REJECTED_BY_PEER) ||
+            failure.exception.match(StandardErrorCode.NOT_MATCH_APP_INSTANCE_ID)
+}

@@ -1,0 +1,1113 @@
+package com.clipflow.db.paste
+
+import app.cash.sqldelight.db.QueryResult
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.turbine.test
+import com.clipflow.Database
+import com.clipflow.app.AppInfo
+import com.clipflow.db.TestDriverFactory
+import com.clipflow.db.createDatabase
+import com.clipflow.paste.PasteCollection
+import com.clipflow.paste.PasteData
+import com.clipflow.paste.PasteState
+import com.clipflow.paste.PasteType
+import com.clipflow.paste.SearchContentService
+import com.clipflow.paste.item.CreatePasteItemHelper.createTextPasteItem
+import com.clipflow.paste.item.CreatePasteItemHelper.createUrlPasteItem
+import com.clipflow.paste.item.DefaultPasteItemReader
+import com.clipflow.paste.plugin.type.DesktopTextTypePlugin
+import com.clipflow.task.TaskSubmitter
+import com.clipflow.utils.DateUtils
+import com.clipflow.utils.getJsonUtils
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class PasteDaoTest {
+
+    // Eagerly initialize JsonUtils to avoid circular class initialization between
+    // PasteItem.Companion (which calls getJsonUtils()) and TextPasteItem
+    @Suppress("unused")
+    private val jsonUtils = getJsonUtils()
+
+    private val appInfo =
+        AppInfo(
+            appInstanceId = "test-instance",
+            appVersion = "1.0.0",
+            appRevision = "abc",
+            userName = "testUser",
+        )
+
+    private val searchContentService =
+        object : SearchContentService {
+            override fun createSearchContent(
+                source: String?,
+                searchContentList: List<String>,
+            ): String =
+                (
+                    listOfNotNull(source?.lowercase()) +
+                        searchContentList.map { it.lowercase() }
+                ).joinToString(" ")
+
+            override fun createSearchTerms(queryString: String): List<String> =
+                queryString.trim().split("\\s+".toRegex()).filter {
+                    it.isNotBlank()
+                }
+        }
+
+    private val taskSubmitter: TaskSubmitter = mockk(relaxed = true)
+    private val userDataPathProvider = mockk<com.clipflow.path.UserDataPathProvider>(relaxed = true)
+
+    private val driverFactory = TestDriverFactory()
+
+    private val database = createDatabase(driverFactory)
+
+    private val pasteItemReader = DefaultPasteItemReader()
+
+    private val pasteDao =
+        SqlPasteDao(
+            appInfo = appInfo,
+            database = database,
+            pasteItemReader = pasteItemReader,
+            searchContentService = searchContentService,
+            taskSubmitter = taskSubmitter,
+            userDataPathProvider = userDataPathProvider,
+        )
+
+    private val pasteTagDao = SqlPasteTagDao(database)
+
+    private fun createTestPasteData(
+        text: String = "hello world",
+        pasteType: PasteType = PasteType.TEXT_TYPE,
+        appInstanceId: String = "test-instance",
+        source: String? = null,
+        favorite: Boolean = false,
+    ): PasteData {
+        val textItem =
+            createTextPasteItem(
+                identifiers = listOf(DesktopTextTypePlugin.TEXT),
+                text = text,
+            )
+        return PasteData(
+            appInstanceId = appInstanceId,
+            favorite = favorite,
+            pasteAppearItem = textItem,
+            pasteCollection = PasteCollection(listOf()),
+            pasteType = pasteType.type,
+            source = source,
+            size = textItem.size,
+            hash = textItem.hash,
+            pasteState = PasteState.LOADED,
+            createTime = DateUtils.nowEpochMilliseconds(),
+        )
+    }
+
+    // total_changes() also counts rows written by triggers, so a single-row
+    // UPDATE that moves it by more than 1 made the FTS trigger rewrite the index
+    private fun totalChanges(driver: SqlDriver): Long =
+        driver
+            .executeQuery(
+                null,
+                "SELECT total_changes()",
+                { cursor -> QueryResult.Value(if (cursor.next().value) cursor.getLong(0)!! else 0L) },
+                0,
+            ).value
+
+    private suspend fun changesOf(block: suspend () -> Unit): Long {
+        val driver = driverFactory.sqlDriver!!
+        val before = totalChanges(driver)
+        block()
+        return totalChanges(driver) - before
+    }
+
+    private fun setSearchContent(
+        id: Long,
+        content: String,
+    ) {
+        driverFactory.sqlDriver!!.execute(
+            null,
+            "UPDATE PasteDataEntity SET pasteSearchContent = ? WHERE id = ?",
+            2,
+        ) {
+            bindString(0, content)
+            bindLong(1, id)
+        }
+    }
+
+    private fun stubDeleteTaskSubmission() {
+        coEvery { taskSubmitter.submit(any()) } coAnswers {
+            val block = firstArg<suspend com.clipflow.task.TaskBuilder.() -> Unit>()
+            val builder = mockk<com.clipflow.task.TaskBuilder>(relaxed = true)
+            every { builder.addDeletePasteTasks(any()) } returns builder
+            block.invoke(builder)
+        }
+    }
+
+    // --- Create and retrieve ---
+
+    @Test
+    fun `createPasteData returns valid id`() =
+        runTest {
+            val pasteData = createTestPasteData()
+            val id = pasteDao.createPasteData(pasteData)
+            assertTrue(id > 0)
+        }
+
+    @Test
+    fun `getNoDeletePasteData retrieves created paste`() =
+        runTest {
+            val pasteData = createTestPasteData(text = "test retrieval")
+            val id = pasteDao.createPasteData(pasteData)
+
+            val retrieved = pasteDao.getNoDeletePasteData(id)
+            assertNotNull(retrieved)
+            assertEquals(id, retrieved.id)
+            assertEquals(pasteData.appInstanceId, retrieved.appInstanceId)
+            assertEquals(pasteData.pasteType, retrieved.pasteType)
+            assertEquals(pasteData.hash, retrieved.hash)
+        }
+
+    @Test
+    fun `getNoDeletePasteData returns null for non-existent id`() =
+        runTest {
+            assertNull(pasteDao.getNoDeletePasteData(99999L))
+        }
+
+    @Test
+    fun `getLoadedPasteDataBlock retrieves LOADED paste`() =
+        runTest {
+            val pasteData = createTestPasteData()
+            val id = pasteDao.createPasteData(pasteData)
+
+            val retrieved = pasteDao.getLoadedPasteDataBlock(id)
+            assertNotNull(retrieved)
+            assertEquals(PasteState.LOADED, retrieved.pasteState)
+        }
+
+    @Test
+    fun `getLoadingPasteData returns null for LOADED paste`() =
+        runTest {
+            val pasteData = createTestPasteData()
+            val id = pasteDao.createPasteData(pasteData)
+
+            assertNull(pasteDao.getLoadingPasteData(id))
+        }
+
+    @Test
+    fun `getLoadingPasteData retrieves LOADING paste`() =
+        runTest {
+            val pasteData = createTestPasteData()
+            val id = pasteDao.createPasteData(pasteData, pasteState = PasteState.LOADING)
+
+            val retrieved = pasteDao.getLoadingPasteData(id)
+            assertNotNull(retrieved)
+            assertEquals(PasteState.LOADING, retrieved.pasteState)
+        }
+
+    @Test
+    fun `multiple createPasteData calls return unique ids`() =
+        runTest {
+            val id1 = pasteDao.createPasteData(createTestPasteData(text = "first"))
+            val id2 = pasteDao.createPasteData(createTestPasteData(text = "second"))
+            val id3 = pasteDao.createPasteData(createTestPasteData(text = "third"))
+
+            assertTrue(id1 != id2)
+            assertTrue(id2 != id3)
+        }
+
+    // --- Update state ---
+
+    @Test
+    fun `updatePasteState changes paste state`() =
+        runTest {
+            val pasteData = createTestPasteData()
+            val id = pasteDao.createPasteData(pasteData, pasteState = PasteState.LOADING)
+
+            pasteDao.updatePasteState(id, PasteState.LOADED)
+            val retrieved = pasteDao.getNoDeletePasteData(id)
+            assertNotNull(retrieved)
+            assertEquals(PasteState.LOADED, retrieved.pasteState)
+        }
+
+    @Test
+    fun `updateCreateTime changes the timestamp`() =
+        runTest {
+            val pasteData = createTestPasteData()
+            val id = pasteDao.createPasteData(pasteData)
+            val before = pasteDao.getNoDeletePasteData(id)!!.createTime
+            pasteDao.updateCreateTime(id)
+
+            val after = pasteDao.getNoDeletePasteData(id)!!.createTime
+            assertTrue(after >= before)
+        }
+
+    @Test
+    fun `paste pull cursor upsert never moves backwards`() =
+        runTest {
+            pasteDao.upsertPastePullCursorMaxCreateTime("remote-device", 200L)
+            pasteDao.upsertPastePullCursorMaxCreateTime("remote-device", 100L)
+            pasteDao.upsertPastePullCursorMaxCreateTime("other-device", 300L)
+
+            assertEquals(
+                mapOf(
+                    "remote-device" to 200L,
+                    "other-device" to 300L,
+                ),
+                pasteDao.getPastePullCursorMaxCreateTimes(),
+            )
+        }
+
+    @Test
+    fun `paste pull cursor delete only removes the given device`() =
+        runTest {
+            pasteDao.upsertPastePullCursorMaxCreateTime("remote-device", 200L)
+            pasteDao.upsertPastePullCursorMaxCreateTime("other-device", 300L)
+
+            pasteDao.deletePastePullCursor("remote-device")
+
+            assertEquals(
+                mapOf("other-device" to 300L),
+                pasteDao.getPastePullCursorMaxCreateTimes(),
+            )
+        }
+
+    // --- Delete ---
+
+    @Test
+    fun `markDeletePasteData marks paste as deleted`() =
+        runTest {
+            stubDeleteTaskSubmission()
+
+            val pasteData = createTestPasteData()
+            val id = pasteDao.createPasteData(pasteData)
+            assertNotNull(pasteDao.getNoDeletePasteData(id))
+
+            pasteDao.markDeletePasteData(id)
+
+            // getNoDeletePasteData should return null because it filters out DELETED
+            assertNull(pasteDao.getNoDeletePasteData(id))
+        }
+
+    @Test
+    fun `getDeletePasteData retrieves marked-deleted paste`() =
+        runTest {
+            stubDeleteTaskSubmission()
+
+            val pasteData = createTestPasteData()
+            val id = pasteDao.createPasteData(pasteData)
+
+            pasteDao.markDeletePasteData(id)
+
+            val deleted = pasteDao.getDeletePasteData(id)
+            assertNotNull(deleted)
+            assertEquals(PasteState.DELETED, deleted.pasteState)
+        }
+
+    // --- Search ---
+
+    @Test
+    fun `searchPasteData returns all with empty search terms`() =
+        runTest {
+            pasteDao.createPasteData(createTestPasteData(text = "apple"))
+            pasteDao.createPasteData(createTestPasteData(text = "banana"))
+            pasteDao.createPasteData(createTestPasteData(text = "cherry"))
+
+            val results =
+                pasteDao.searchPasteData(
+                    searchTerms = listOf(),
+                    limit = 100,
+                )
+            assertEquals(3, results.size)
+        }
+
+    @Test
+    fun `searchPasteData orders by createTime in the requested direction`() =
+        runTest {
+            val older = pasteDao.createPasteData(createTestPasteData(text = "older").copy(createTime = 1_000L))
+            val middle1 = pasteDao.createPasteData(createTestPasteData(text = "middle1").copy(createTime = 2_000L))
+            val middle2 = pasteDao.createPasteData(createTestPasteData(text = "middle2").copy(createTime = 2_000L))
+            val newest = pasteDao.createPasteData(createTestPasteData(text = "newest").copy(createTime = 3_000L))
+            val deleted = pasteDao.createPasteData(createTestPasteData(text = "deleted").copy(createTime = 4_000L))
+            pasteDao.updatePasteState(deleted, PasteState.DELETED)
+
+            // When sort=true (DESC), newer createTime comes first, with larger id breaking ties
+            assertEquals(
+                listOf(newest, middle2),
+                pasteDao.searchPasteData(searchTerms = listOf(), sort = true, limit = 2).map { it.id },
+            )
+            assertEquals(
+                listOf(newest, middle2, middle1, older),
+                pasteDao.searchPasteData(searchTerms = listOf(), sort = true, limit = 10).map { it.id },
+            )
+
+            // When sort=false (ASC), older createTime comes first, with smaller id breaking ties
+            assertEquals(
+                listOf(older, middle1),
+                pasteDao.searchPasteData(searchTerms = listOf(), sort = false, limit = 2).map { it.id },
+            )
+            assertEquals(
+                listOf(older, middle1, middle2, newest),
+                pasteDao.searchPasteData(searchTerms = listOf(), sort = false, limit = 10).map { it.id },
+            )
+        }
+
+    @Test
+    fun `searchPasteData with limit returns limited results`() =
+        runTest {
+            pasteDao.createPasteData(createTestPasteData(text = "item1"))
+            pasteDao.createPasteData(createTestPasteData(text = "item2"))
+            pasteDao.createPasteData(createTestPasteData(text = "item3"))
+
+            val results =
+                pasteDao.searchPasteData(
+                    searchTerms = listOf(),
+                    limit = 2,
+                )
+            assertEquals(2, results.size)
+        }
+
+    @Test
+    fun `searchPasteData treats punctuation in search terms as literals`() =
+        runTest {
+            pasteDao.createPasteData(createTestPasteData(text = "mail foo@bar.com today"))
+            pasteDao.createPasteData(createTestPasteData(text = "unrelated note"))
+
+            for (term in listOf("bar.com", "don't", "c++", "foo@bar", "3.14", "a-b", "say\"hi")) {
+                pasteDao.searchPasteData(searchTerms = listOf(term), limit = 100)
+            }
+
+            val results = pasteDao.searchPasteData(searchTerms = listOf("bar.com"), limit = 100)
+            assertEquals(1, results.size)
+            assertTrue(results.single().pasteSearchContent!!.contains("foo@bar.com"))
+        }
+
+    @Test
+    fun `searchPasteDataFlow filters by terms containing punctuation`() =
+        runTest {
+            pasteDao.createPasteData(createTestPasteData(text = "mail foo@bar.com today"))
+            pasteDao.createPasteData(createTestPasteData(text = "unrelated note"))
+
+            pasteDao.searchPasteDataFlow(searchTerms = listOf("bar.com"), limit = 100).test {
+                assertEquals(1, awaitItem().size)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `searchPasteData with tag filter`() =
+        runTest {
+            val id1 = pasteDao.createPasteData(createTestPasteData(text = "tagged item"))
+            pasteDao.createPasteData(createTestPasteData(text = "normal item"))
+            val tagId = pasteTagDao.createPasteTag("Favorite", 0xFF007AFF)
+            pasteTagDao.switchPinPasteTagBlock(id1, tagId)
+
+            val results =
+                pasteDao.searchPasteData(
+                    searchTerms = listOf(),
+                    tag = tagId,
+                    limit = 100,
+                )
+            assertEquals(1, results.size)
+        }
+
+    @Test
+    fun `searchPasteData with type filter`() =
+        runTest {
+            pasteDao.createPasteData(createTestPasteData(text = "text item"))
+
+            val urlItem = createUrlPasteItem(url = "https://example.com")
+            val urlPaste =
+                PasteData(
+                    appInstanceId = "test-instance",
+                    pasteAppearItem = urlItem,
+                    pasteCollection = PasteCollection(listOf()),
+                    pasteType = PasteType.URL_TYPE.type,
+                    size = urlItem.size,
+                    hash = urlItem.hash,
+                    pasteState = PasteState.LOADED,
+                    createTime = DateUtils.nowEpochMilliseconds(),
+                )
+            pasteDao.createPasteData(urlPaste)
+
+            val textResults =
+                pasteDao.searchPasteData(
+                    searchTerms = listOf(),
+                    pasteTypeList = listOf(PasteType.TEXT_TYPE.type),
+                    limit = 100,
+                )
+            assertEquals(1, textResults.size)
+            assertEquals(PasteType.TEXT_TYPE.type, textResults[0].pasteType)
+        }
+
+    // --- Size queries ---
+
+    @Test
+    fun `getSize returns total size of all pastes`() =
+        runTest {
+            val paste1 = createTestPasteData(text = "hello")
+            val paste2 = createTestPasteData(text = "world")
+            pasteDao.createPasteData(paste1)
+            pasteDao.createPasteData(paste2)
+
+            val totalSize = pasteDao.getSize(allOrTagged = true)
+            assertEquals(paste1.size + paste2.size, totalSize)
+        }
+
+    @Test
+    fun `getSize with allOrTagged false returns only tagged size`() =
+        runTest {
+            val paste1 = createTestPasteData(text = "hello")
+            val paste2 = createTestPasteData(text = "world")
+            val id1 = pasteDao.createPasteData(paste1)
+            pasteDao.createPasteData(paste2)
+            val tagId = pasteTagDao.createPasteTag("Favorite", 0xFF007AFF)
+            pasteTagDao.switchPinPasteTagBlock(id1, tagId)
+
+            val taggedSize = pasteDao.getSize(allOrTagged = false)
+            assertEquals(paste1.size, taggedSize)
+        }
+
+    @Test
+    fun `getSize returns 0 for empty database`() =
+        runTest {
+            assertEquals(0L, pasteDao.getSize(allOrTagged = true))
+        }
+
+    @Test
+    fun `getMinPasteDataCreateTime returns earliest time`() =
+        runTest {
+            val earlyPaste = createTestPasteData(text = "early").copy(createTime = 1000L)
+            val latePaste = createTestPasteData(text = "late").copy(createTime = 2000L)
+            pasteDao.createPasteData(earlyPaste)
+            pasteDao.createPasteData(latePaste)
+
+            val minTime = pasteDao.getMinPasteDataCreateTime()
+            assertEquals(1000L, minTime)
+        }
+
+    @Test
+    fun `getMinPasteDataCreateTime returns null for empty database`() =
+        runTest {
+            assertNull(pasteDao.getMinPasteDataCreateTime())
+        }
+
+    @Test
+    fun `getSizeByTimeLessThan returns cumulative size before given time`() =
+        runTest {
+            val paste1 = createTestPasteData(text = "old").copy(createTime = 1000L)
+            val paste2 = createTestPasteData(text = "new").copy(createTime = 5000L)
+            pasteDao.createPasteData(paste1)
+            pasteDao.createPasteData(paste2)
+
+            val sizeBefore3000 = pasteDao.getSizeByTimeLessThan(3000L)
+            assertEquals(paste1.size, sizeBefore3000)
+        }
+
+    // --- Tags ---
+
+    @Test
+    fun `createPasteTag returns valid id`() =
+        runTest {
+            val tagId = pasteTagDao.createPasteTag("important", 0xFF0000L)
+            assertTrue(tagId > 0)
+        }
+
+    @Test
+    fun `updatePasteTagName changes tag name`() =
+        runTest {
+            val tagId = pasteTagDao.createPasteTag("old_name", 0xFF0000L)
+            pasteTagDao.updatePasteTagName(tagId, "new_name")
+            // Verify through flow
+            pasteTagDao.getAllTagsFlow().test {
+                val tags = awaitItem()
+                val tag = tags.find { it.id == tagId }
+                assertNotNull(tag)
+                assertEquals("new_name", tag.name)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `updatePasteTagColor changes tag color`() =
+        runTest {
+            val tagId = pasteTagDao.createPasteTag("tag", 0xFF0000L)
+            pasteTagDao.updatePasteTagColor(tagId, 0x00FF00L)
+            pasteTagDao.getAllTagsFlow().test {
+                val tags = awaitItem()
+                val tag = tags.find { it.id == tagId }
+                assertNotNull(tag)
+                assertEquals(0x00FF00L, tag.color)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `switchPinPasteTagBlock toggles pin state`() =
+        runTest {
+            val pasteData = createTestPasteData()
+            val pasteId = pasteDao.createPasteData(pasteData)
+            val tagId = pasteTagDao.createPasteTag("tag1", 0xFF0000L)
+
+            // Initially not pinned
+            var pinned = pasteTagDao.getPasteTagsBlock(pasteId)
+            assertFalse(pinned.contains(tagId))
+
+            // Pin
+            pasteTagDao.switchPinPasteTagBlock(pasteId, tagId)
+            pinned = pasteTagDao.getPasteTagsBlock(pasteId)
+            assertTrue(pinned.contains(tagId))
+
+            // Unpin
+            pasteTagDao.switchPinPasteTagBlock(pasteId, tagId)
+            pinned = pasteTagDao.getPasteTagsBlock(pasteId)
+            assertFalse(pinned.contains(tagId))
+        }
+
+    @Test
+    fun `deletePasteTagBlock removes tag`() =
+        runTest {
+            val tagId = pasteTagDao.createPasteTag("to_delete", 0xFF0000L)
+            pasteTagDao.deletePasteTagBlock(tagId)
+
+            pasteTagDao.getAllTagsFlow().test {
+                val tags = awaitItem()
+                assertNull(tags.find { it.id == tagId })
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `deletePasteTagBlock unlinks tagged pastes so cleanup can reclaim them`() =
+        runTest {
+            stubDeleteTaskSubmission()
+            val pasteData = createTestPasteData()
+            val pasteId = pasteDao.createPasteData(pasteData)
+            val tagId = pasteTagDao.createPasteTag("to_delete", 0xFF0000L)
+            pasteTagDao.switchPinPasteTagBlock(pasteId, tagId)
+
+            pasteTagDao.deletePasteTagBlock(tagId)
+
+            assertTrue(pasteTagDao.getPasteTagsBlock(pasteId).isEmpty())
+            assertEquals(0L, pasteDao.getSize(allOrTagged = false))
+
+            pasteDao.markDeleteByCleanTime(pasteData.createTime + 1, null)
+            assertNull(pasteDao.getNoDeletePasteData(pasteId))
+        }
+
+    @Test
+    fun `cleanup by time leaves rows that are still loading`() =
+        runTest {
+            stubDeleteTaskSubmission()
+            val loaded = createTestPasteData(text = "loaded")
+            val loadedId = pasteDao.createPasteData(loaded)
+            val loadingId = pasteDao.createPasteData(createTestPasteData(text = "loading"), PasteState.LOADING)
+
+            pasteDao.markDeleteByCleanTime(DateUtils.nowEpochMilliseconds() + 1_000, null)
+
+            assertNull(pasteDao.getNoDeletePasteData(loadedId))
+            assertNotNull(pasteDao.getLoadingPasteData(loadingId))
+        }
+
+    @Test
+    fun `same hash lookup ignores rows that are still loading`() =
+        runTest {
+            val pasteData = createTestPasteData(text = "same")
+            val loadedId = pasteDao.createPasteData(pasteData)
+            val loadingId = pasteDao.createPasteData(pasteData, PasteState.LOADING)
+            val newId = pasteDao.createPasteData(pasteData)
+
+            val ids = pasteDao.getSameHashPasteDataIds(pasteData.hash, pasteData.pasteType, newId)
+
+            assertEquals(listOf(loadedId), ids)
+            assertFalse(loadingId in ids)
+        }
+
+    @Test
+    fun `same hash lookup from a row already retired finds nothing`() =
+        runTest {
+            stubDeleteTaskSubmission()
+            val pasteData = createTestPasteData(text = "same")
+            // Two concurrent releases of the same content: both rows land first
+            val firstId = pasteDao.createPasteData(pasteData)
+            val secondId = pasteDao.createPasteData(pasteData)
+
+            // The first release retires the second row ...
+            assertEquals(
+                listOf(secondId),
+                pasteDao.getSameHashPasteDataIds(pasteData.hash, pasteData.pasteType, firstId),
+            )
+            pasteDao.markDeletePasteData(secondId)
+
+            // ... so the second release must not retire the first one in turn
+            assertTrue(pasteDao.getSameHashPasteDataIds(pasteData.hash, pasteData.pasteType, secondId).isEmpty())
+            assertNotNull(pasteDao.getNoDeletePasteData(firstId))
+        }
+
+    @Test
+    fun `remote loading ids exclude local and finished rows`() =
+        runTest {
+            val remoteLoading =
+                pasteDao.createPasteData(
+                    createTestPasteData(text = "a", appInstanceId = "remote").copy(remote = true),
+                    PasteState.LOADING,
+                )
+            pasteDao.createPasteData(createTestPasteData(text = "b", appInstanceId = "remote").copy(remote = true))
+            pasteDao.createPasteData(createTestPasteData(text = "c"), PasteState.LOADING)
+
+            assertEquals(listOf(remoteLoading), pasteDao.getRemoteLoadingPasteIds())
+        }
+
+    @Test
+    fun `deletePasteData removes the paste's tag links`() =
+        runTest {
+            stubDeleteTaskSubmission()
+            val pasteId = pasteDao.createPasteData(createTestPasteData())
+            val tagId = pasteTagDao.createPasteTag("kept", 0xFF0000L)
+            pasteTagDao.switchPinPasteTagBlock(pasteId, tagId)
+            pasteDao.markDeletePasteData(pasteId)
+
+            pasteDao.deletePasteData(pasteId)
+
+            assertTrue(pasteTagDao.getPasteTagsBlock(pasteId).isEmpty())
+        }
+
+    @Test
+    fun `migration 4 removes tag links whose tag or paste no longer exists`() {
+        val driverFactory = TestDriverFactory()
+        val queries = createDatabase(driverFactory).tagDatabaseQueries
+        val driver = driverFactory.sqlDriver!!
+        try {
+            val liveTagId =
+                queries.transactionWithResult {
+                    queries.createTag("live", 0L, 0L)
+                    queries.getLastId().executeAsOne()
+                }
+            driver.execute(
+                null,
+                "INSERT INTO PasteDataEntity(id, appInstanceId, favorite, pasteCollection, size, hash, " +
+                    "createTime, remote) VALUES (1, 'a', 0, '', 0, 'h', 0, 0)",
+                0,
+            )
+            queries.pinPasteTag(1L, liveTagId)
+            queries.pinPasteTag(1L, liveTagId + 100) // tag deleted
+            queries.pinPasteTag(2L, liveTagId) // paste deleted
+
+            Database.Schema.migrate(driver, 4, 5)
+
+            assertEquals(listOf(liveTagId), queries.getPasteTags(1L).executeAsList())
+            assertTrue(queries.getPasteTags(2L).executeAsList().isEmpty())
+        } finally {
+            driverFactory.closeDriver()
+        }
+    }
+
+    @Test
+    fun `FTS is rebuilt only when the search content changes`() =
+        runTest {
+            val id = pasteDao.createPasteData(createTestPasteData(text = "original words"))
+
+            assertEquals(1L, changesOf { pasteDao.updateCreateTime(id) })
+            assertEquals(1L, changesOf { pasteDao.updatePasteState(id, PasteState.LOADED) })
+            assertEquals(1, pasteDao.searchPasteData(searchTerms = listOf("original"), limit = 10).size)
+
+            assertTrue(changesOf { setSearchContent(id, "replaced words") } > 1L)
+            assertTrue(pasteDao.searchPasteData(searchTerms = listOf("original"), limit = 10).isEmpty())
+            assertEquals(1, pasteDao.searchPasteData(searchTerms = listOf("replaced"), limit = 10).size)
+
+            // Updating with the identical content does not trigger FTS rebuild
+            assertEquals(1L, changesOf { setSearchContent(id, "replaced words") })
+            assertEquals(1, pasteDao.searchPasteData(searchTerms = listOf("replaced"), limit = 10).size)
+        }
+
+    @Test
+    fun `migration 5 adds the list index and guards the FTS update trigger`() {
+        val driverFactory = TestDriverFactory()
+        val queries = createDatabase(driverFactory).pasteDatabaseQueries
+        val driver = driverFactory.sqlDriver!!
+        try {
+            // Roll the v5 objects back to their v4 shape
+            driver.execute(null, "DROP INDEX IdxPasteDataActiveCreateTime", 0)
+            driver.execute(null, "DROP TRIGGER PasteData_AU", 0)
+            driver.execute(
+                null,
+                """
+                CREATE TRIGGER PasteData_AU AFTER UPDATE ON PasteDataEntity BEGIN
+                    INSERT INTO PasteDataEntityFts(PasteDataEntityFts, rowid, pasteSearchContent)
+                    VALUES('delete', old.id, old.pasteSearchContent);
+                    INSERT INTO PasteDataEntityFts(rowid, pasteSearchContent)
+                    VALUES (new.id, new.pasteSearchContent);
+                END
+                """.trimIndent(),
+                0,
+            )
+            driver.execute(
+                null,
+                "INSERT INTO PasteDataEntity(id, appInstanceId, favorite, pasteCollection, size, hash, " +
+                    "createTime, pasteSearchContent, pasteState, remote) " +
+                    "VALUES (1, 'a', 0, '', 0, 'h', 0, 'kept words', 1, 0)",
+                0,
+            )
+
+            Database.Schema.migrate(driver, 5, 6)
+
+            val plan =
+                driver
+                    .executeQuery(
+                        null,
+                        "EXPLAIN QUERY PLAN SELECT id FROM PasteDataEntity WHERE pasteState != -1 " +
+                            "ORDER BY createTime DESC, id DESC LIMIT 1",
+                        { cursor ->
+                            val details = mutableListOf<String>()
+                            while (cursor.next().value) details += cursor.getString(3)!!
+                            QueryResult.Value(details)
+                        },
+                        0,
+                    ).value
+            assertTrue(plan.any { "IdxPasteDataActiveCreateTime" in it }, plan.toString())
+            assertFalse(plan.any { "TEMP B-TREE" in it }, plan.toString())
+
+            val before = totalChanges(driver)
+            queries.updateCreateTime(5L, 1L)
+            assertEquals(1L, totalChanges(driver) - before)
+            assertEquals(
+                listOf(1L),
+                driver
+                    .executeQuery(
+                        null,
+                        "SELECT rowid FROM PasteDataEntityFts WHERE PasteDataEntityFts MATCH 'kept'",
+                        { cursor ->
+                            val ids = mutableListOf<Long>()
+                            while (cursor.next().value) ids += cursor.getLong(0)!!
+                            QueryResult.Value(ids)
+                        },
+                        0,
+                    ).value,
+            )
+        } finally {
+            driverFactory.closeDriver()
+        }
+    }
+
+    @Test
+    fun `getMaxSortOrder returns max sort order`() =
+        runTest {
+            val initialMax = pasteTagDao.getMaxSortOrder()
+            pasteTagDao.createPasteTag("tag1", 0xFF0000L)
+            val afterFirst = pasteTagDao.getMaxSortOrder()
+            pasteTagDao.createPasteTag("tag2", 0x00FF00L)
+            val afterSecond = pasteTagDao.getMaxSortOrder()
+
+            assertTrue(afterFirst > initialMax)
+            assertTrue(afterSecond > afterFirst)
+        }
+
+    @Test
+    fun `updatePasteTagsSortOrder reorders tags`() =
+        runTest {
+            val id1 = pasteTagDao.createPasteTag("a", 0xFF0000L)
+            val id2 = pasteTagDao.createPasteTag("b", 0x00FF00L)
+            val id3 = pasteTagDao.createPasteTag("c", 0x0000FFL)
+
+            // Original order: a, b, c
+            pasteTagDao.getAllTagsFlow().test {
+                val initial = awaitItem()
+                assertEquals(listOf(id1, id2, id3), initial.map { it.id })
+                cancelAndIgnoreRemainingEvents()
+            }
+
+            // Reorder to: c, a, b
+            pasteTagDao.updatePasteTagsSortOrder(listOf(id3, id1, id2))
+
+            pasteTagDao.getAllTagsFlow().test {
+                val reordered = awaitItem()
+                assertEquals(listOf(id3, id1, id2), reordered.map { it.id })
+                // Sort orders compact and 1-based so getMaxSortOrder still works for new tags.
+                assertEquals(3L, pasteTagDao.getMaxSortOrder())
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `updatePasteTagsSortOrder with empty list is a no-op`() =
+        runTest {
+            val id1 = pasteTagDao.createPasteTag("only", 0xFF0000L)
+            val before = pasteTagDao.getMaxSortOrder()
+
+            pasteTagDao.updatePasteTagsSortOrder(emptyList())
+
+            assertEquals(before, pasteTagDao.getMaxSortOrder())
+            pasteTagDao.getAllTagsFlow().test {
+                val tags = awaitItem()
+                assertEquals(listOf(id1), tags.map { it.id })
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    // --- Flow ---
+
+    @Test
+    fun `getAllTagsFlow emits on tag creation`() =
+        runTest {
+            pasteTagDao.getAllTagsFlow().test {
+                val initial = awaitItem()
+                assertTrue(initial.isEmpty())
+
+                pasteTagDao.createPasteTag("new_tag", 0xFF0000L)
+
+                val updated = awaitItem()
+                assertEquals(1, updated.size)
+                assertEquals("new_tag", updated[0].name)
+
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    // --- Batch read ---
+
+    @Test
+    fun `batchReadPasteData processes all pastes`() =
+        runTest {
+            pasteDao.createPasteData(createTestPasteData(text = "a"))
+            pasteDao.createPasteData(createTestPasteData(text = "b"))
+            pasteDao.createPasteData(createTestPasteData(text = "c"))
+
+            val processed = mutableListOf<PasteData>()
+            val count =
+                pasteDao.batchReadPasteData(
+                    batchNum = 2,
+                    readPasteDataList = { id, limit ->
+                        database.pasteDatabaseQueries
+                            .getBatchPasteData(id, limit, PasteData::mapper)
+                            .executeAsList()
+                    },
+                    dealPasteData = { processed.add(it) },
+                )
+
+            assertEquals(3L, count)
+            assertEquals(3, processed.size)
+        }
+
+    @Test
+    fun `batchReadPasteData returns 0 for empty database`() =
+        runTest {
+            val count =
+                pasteDao.batchReadPasteData(
+                    readPasteDataList = { id, limit ->
+                        database.pasteDatabaseQueries
+                            .getBatchPasteData(id, limit, PasteData::mapper)
+                            .executeAsList()
+                    },
+                    dealPasteData = {},
+                )
+
+            assertEquals(0L, count)
+        }
+
+    // --- Search by source ---
+
+    @Test
+    fun `searchBySource returns matching pastes`() =
+        runTest {
+            pasteDao.createPasteData(createTestPasteData(text = "from chrome", source = "Chrome"))
+            pasteDao.createPasteData(createTestPasteData(text = "from vscode", source = "VSCode"))
+            pasteDao.createPasteData(createTestPasteData(text = "also chrome", source = "Chrome"))
+
+            val results = pasteDao.searchBySource("Chrome")
+            assertEquals(2, results.size)
+        }
+
+    @Test
+    fun `searchBySource returns empty for no match`() =
+        runTest {
+            pasteDao.createPasteData(createTestPasteData(text = "test", source = "Chrome"))
+            val results = pasteDao.searchBySource("Firefox")
+            assertTrue(results.isEmpty())
+        }
+
+    // --- Guarded paste edits ---
+
+    @Test
+    fun `updatePasteAppearItemIfUnchanged changes the item and hash`() =
+        runTest {
+            val pasteData = createTestPasteData(text = "original")
+            val id = pasteDao.createPasteData(pasteData)
+            val expectedPasteData = pasteDao.getNoDeletePasteData(id)!!
+
+            val newItem =
+                createTextPasteItem(
+                    identifiers = listOf(DesktopTextTypePlugin.TEXT),
+                    text = "updated",
+                )
+            val applied =
+                pasteDao.updatePasteAppearItemIfUnchanged(
+                    expectedPasteData = expectedPasteData,
+                    pasteItem = newItem,
+                    pasteSearchContent = "updated",
+                    addedSize = newItem.size - expectedPasteData.size,
+                )
+            assertTrue(applied)
+
+            val retrieved = pasteDao.getNoDeletePasteData(id)
+            assertNotNull(retrieved)
+            assertEquals(newItem.hash, retrieved.hash)
+        }
+
+    @Test
+    fun `updatePasteContent replaces item and collection when the hash matches`() =
+        runTest {
+            val pasteData = createTestPasteData(text = "original")
+            val id = pasteDao.createPasteData(pasteData)
+            val expectedPasteData = pasteDao.getNoDeletePasteData(id)!!
+
+            val newItem = createTextPasteItem(text = "edited")
+            val companion = createTextPasteItem(text = "edited-flavor")
+            val applied =
+                pasteDao.updatePasteContent(
+                    expectedPasteData = expectedPasteData,
+                    pasteItem = newItem,
+                    pasteCollection = PasteCollection(listOf(companion)),
+                    pasteSearchContent = "edited",
+                    addedSize = newItem.size - pasteData.size,
+                    expectedHash = pasteData.hash,
+                )
+            assertTrue(applied)
+
+            val retrieved = pasteDao.getNoDeletePasteData(id)
+            assertNotNull(retrieved)
+            assertEquals(newItem.hash, retrieved.hash)
+            assertEquals(1, retrieved.pasteCollection.pasteItems.size)
+        }
+
+    @Test
+    fun `updatePasteContent refuses a stale hash and leaves the row untouched`() =
+        runTest {
+            val pasteData = createTestPasteData(text = "original")
+            val id = pasteDao.createPasteData(pasteData)
+            val expectedPasteData = pasteDao.getNoDeletePasteData(id)!!
+
+            val newItem = createTextPasteItem(text = "edited")
+            val applied =
+                pasteDao.updatePasteContent(
+                    expectedPasteData = expectedPasteData,
+                    pasteItem = newItem,
+                    pasteCollection = PasteCollection(listOf()),
+                    pasteSearchContent = "edited",
+                    addedSize = 0L,
+                    expectedHash = "stale-hash",
+                )
+            assertFalse(applied)
+
+            val retrieved = pasteDao.getNoDeletePasteData(id)
+            assertNotNull(retrieved)
+            assertEquals(pasteData.hash, retrieved.hash)
+        }
+
+    @Test
+    fun `updatePasteContent refuses rows that are deleted or still loading`() =
+        runTest {
+            val deleted = createTestPasteData(text = "gone")
+            val deletedId = pasteDao.createPasteData(deleted)
+            pasteDao.updatePasteState(deletedId, PasteState.DELETED)
+
+            val loading = createTestPasteData(text = "loading")
+            val loadingId = pasteDao.createPasteData(loading, pasteState = PasteState.LOADING)
+
+            val newItem = createTextPasteItem(text = "edited")
+            val guardedRows =
+                listOf(
+                    deleted.copy(id = deletedId) to deleted.hash,
+                    loading.copy(id = loadingId, pasteState = PasteState.LOADING) to loading.hash,
+                )
+            for ((expectedPasteData, expectedHash) in guardedRows) {
+                assertFalse(
+                    pasteDao.updatePasteContent(
+                        expectedPasteData = expectedPasteData,
+                        pasteItem = newItem,
+                        pasteCollection = PasteCollection(listOf()),
+                        pasteSearchContent = "edited",
+                        addedSize = 0L,
+                        expectedHash = expectedHash,
+                    ),
+                )
+            }
+        }
+
+    @Test
+    fun `metadata CAS rejects a stale item even when its hash is unchanged`() =
+        runTest {
+            val url = "https://example.com"
+            val pasteData =
+                createTestPasteData(text = url, pasteType = PasteType.URL_TYPE).copy(
+                    pasteAppearItem = createUrlPasteItem(url = url),
+                )
+            val id = pasteDao.createPasteData(pasteData)
+            val expectedPasteData = pasteDao.getNoDeletePasteData(id)!!
+
+            val firstItem =
+                createUrlPasteItem(
+                    url = url,
+                    extraInfo = buildJsonObject { put("title", "first") },
+                )
+            assertTrue(
+                pasteDao.updatePasteAppearItemIfUnchanged(
+                    expectedPasteData = expectedPasteData,
+                    pasteItem = firstItem,
+                    pasteSearchContent = "first",
+                    addedSize = 0L,
+                ),
+            )
+            val secondItem =
+                createUrlPasteItem(
+                    url = url,
+                    extraInfo = buildJsonObject { put("title", "second") },
+                )
+            assertEquals(firstItem.hash, secondItem.hash)
+            assertFalse(
+                pasteDao.updatePasteAppearItemIfUnchanged(
+                    expectedPasteData = expectedPasteData,
+                    pasteItem = secondItem,
+                    pasteSearchContent = "second",
+                    addedSize = 0L,
+                ),
+            )
+        }
+
+    @Test
+    fun `content CAS rejects a stale collection when item and hash are unchanged`() =
+        runTest {
+            val pasteData = createTestPasteData(text = "original")
+            val id = pasteDao.createPasteData(pasteData)
+            val expectedPasteData = pasteDao.getNoDeletePasteData(id)!!
+            val item = expectedPasteData.pasteAppearItem!!
+
+            assertTrue(
+                pasteDao.updatePasteContent(
+                    expectedPasteData = expectedPasteData,
+                    pasteItem = item,
+                    pasteCollection = PasteCollection(listOf(createTextPasteItem(text = "first flavor"))),
+                    pasteSearchContent = "original",
+                    addedSize = 0L,
+                    expectedHash = expectedPasteData.hash,
+                ),
+            )
+            assertFalse(
+                pasteDao.updatePasteContent(
+                    expectedPasteData = expectedPasteData,
+                    pasteItem = item,
+                    pasteCollection = PasteCollection(listOf(createTextPasteItem(text = "second flavor"))),
+                    pasteSearchContent = "original",
+                    addedSize = 0L,
+                    expectedHash = expectedPasteData.hash,
+                ),
+            )
+        }
+}

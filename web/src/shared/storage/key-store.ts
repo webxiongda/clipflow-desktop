@@ -1,4 +1,4 @@
-import { CrossPasteCrypto } from "@/shared/core";
+import { ClipFlowCrypto } from "@/shared/core";
 
 /**
  * Stored key pair format.
@@ -34,7 +34,7 @@ export const KeyStore = {
   },
 
   async generateAndStore(): Promise<StoredKeyPair> {
-    const jsKeyPair = await CrossPasteCrypto.generateKeyPair();
+    const jsKeyPair = await ClipFlowCrypto.generateKeyPair();
     const stored: StoredKeyPair = {
       signPublicKey: toStorable(jsKeyPair.signPublicKey),
       signPrivateKey: toStorable(jsKeyPair.signPrivateKey),

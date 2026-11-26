@@ -1,0 +1,238 @@
+package com.clipflow.config
+
+import com.clipflow.config.AppConfig.Companion.toBoolean
+import com.clipflow.config.AppConfig.Companion.toInt
+import com.clipflow.config.AppConfig.Companion.toLong
+import com.clipflow.config.AppConfig.Companion.toString
+import com.clipflow.ui.extension.ProxyType
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class DesktopAppConfig(
+    override val language: String,
+    override val font: String = "",
+    val enableAutoStartUp: Boolean = true,
+    val enableDebugMode: Boolean = false,
+    override val isFollowSystemTheme: Boolean = true,
+    override val isDarkTheme: Boolean = false,
+    // Side search window height in dp, clamped by DesktopAppSize at apply time
+    val searchWindowHeight: Int = 332,
+    // macOS only: show the app icon in the Dock while the main window is open
+    val showDockIcon: Boolean = true,
+    override val port: Int = 13129,
+    override val enableEncryptSync: Boolean = false,
+    override val enableExpirationCleanup: Boolean = true,
+    override val imageCleanTimeIndex: Int = 6,
+    override val fileCleanTimeIndex: Int = 6,
+    override val enableThresholdCleanup: Boolean = true,
+    // MB
+    override val maxStorage: Long = 2048,
+    override val cleanupPercentage: Int = 20,
+    override val enableDiscovery: Boolean = true,
+    override val blacklist: String = "[]",
+    override val enableSkipPreLaunchPasteboardContent: Boolean = true,
+    override val lastPasteboardChangeCount: Int = -1,
+    override val enablePasteboardListening: Boolean = true,
+    val sourceExclusions: String = "[]",
+    // JSON list of case-insensitive substrings; a source containing any of them is excluded.
+    val sourceExclusionPatterns: String = "[]",
+    val showTutorial: Boolean = true,
+    // MB
+    override val maxBackupFileSize: Long = 32,
+    override val largeFileDestinationPath: String = "",
+    override val enabledSyncFileSizeLimit: Boolean = true,
+    override val maxSyncFileSize: Long = 512,
+    // MB
+    override val maxNonFilePasteSize: Long = 8,
+    override val useDefaultStoragePath: Boolean = true,
+    override val storagePath: String = "",
+    override val enableSoundEffect: Boolean = true,
+    override val enableUrlPreview: Boolean = true,
+    val legacySoftwareCompatibility: Boolean = false,
+    override val pastePrimaryTypeOnly: Boolean = true,
+    override val useNetworkInterfaces: String = "[]",
+    val ocrLanguage: String = "",
+    val useManualProxy: Boolean = false,
+    val proxyType: String = ProxyType.HTTP,
+    val proxyHost: String = "127.0.0.1",
+    val proxyPort: String = "7890",
+    val showGrantAccessibility: Boolean = true,
+    // One-time macOS prompt offering to install the /usr/local/bin/clipflow
+    // CLI symlink; cleared after the user installs or dismisses it once.
+    val showInstallCliPrompt: Boolean = true,
+    // Floating button that opens the paste panel; toggled by the show_paste_panel shortcut
+    val showPastePanelButton: Boolean = false,
+    // Pop a screenshot preview bubble automatically after a screenshot is captured
+    val showScreenshotPreview: Boolean = true,
+    // "normal" or "small", see DesktopAppSize.PASTE_PANEL_BUTTON_SIZE_*
+    val pastePanelButtonSize: String = "normal",
+    val enableClipboardRelay: Boolean = false,
+    override val enableAutoPastePull: Boolean = true,
+    override val enableAutoPullWriteClipboard: Boolean = false,
+    // Sync content type controls
+    override val enableSyncText: Boolean = true,
+    override val enableSyncUrl: Boolean = true,
+    override val enableSyncHtml: Boolean = true,
+    override val enableSyncRtf: Boolean = true,
+    override val enableSyncImage: Boolean = true,
+    override val enableSyncFile: Boolean = true,
+    override val enableSyncColor: Boolean = true,
+    override val enableRemoteShowPairingCode: Boolean = true,
+    // MCP server
+    val enableMcpServer: Boolean = false,
+    val mcpServerPort: Int = 0,
+    // Fingerprint of the most recently dismissed network-blocking diagnosis ("profile|mDnsAllowed"),
+    // or empty when the user has not dismissed the current warning.
+    val networkBlockingDismissedFingerprint: String = "",
+    // Highest app version whose changelog the user has already seen. Empty until seeded on
+    // first launch; drives the highlight badge on the changelog menu entry after an upgrade.
+    val lastSeenChangelogVersion: String = "",
+    // Linux/Wayland: single-use token handed back by the RemoteDesktop portal so the
+    // paste-injection session can be restored without prompting the user again.
+    val linuxRemoteDesktopRestoreToken: String = "",
+    // Windows portable zip only: download a newer release in the background (throttled)
+    // as soon as the periodic check finds one, so the prompt can offer a one-click restart.
+    val autoDownloadUpdate: Boolean = true,
+) : AppConfig {
+    override fun copy(
+        key: String,
+        value: Any,
+    ): DesktopAppConfig =
+        this.copy(
+            language = if (key == "language") toString(value) else language,
+            font = if (key == "font") toString(value) else font,
+            enableAutoStartUp = if (key == "enableAutoStartUp") toBoolean(value) else enableAutoStartUp,
+            enableDebugMode = if (key == "enableDebugMode") toBoolean(value) else enableDebugMode,
+            isFollowSystemTheme = if (key == "isFollowSystemTheme") toBoolean(value) else isFollowSystemTheme,
+            isDarkTheme = if (key == "isDarkTheme") toBoolean(value) else isDarkTheme,
+            searchWindowHeight = if (key == "searchWindowHeight") toInt(value) else searchWindowHeight,
+            showDockIcon = if (key == "showDockIcon") toBoolean(value) else showDockIcon,
+            port = if (key == "port") toInt(value) else port,
+            enableEncryptSync = if (key == "enableEncryptSync") toBoolean(value) else enableEncryptSync,
+            enableExpirationCleanup =
+                if (key == "enableExpirationCleanup") {
+                    toBoolean(
+                        value,
+                    )
+                } else {
+                    enableExpirationCleanup
+                },
+            imageCleanTimeIndex = if (key == "imageCleanTimeIndex") toInt(value) else imageCleanTimeIndex,
+            fileCleanTimeIndex = if (key == "fileCleanTimeIndex") toInt(value) else fileCleanTimeIndex,
+            enableThresholdCleanup =
+                if (key == "enableThresholdCleanup") {
+                    toBoolean(
+                        value,
+                    )
+                } else {
+                    enableThresholdCleanup
+                },
+            maxStorage = if (key == "maxStorage") toLong(value) else maxStorage,
+            cleanupPercentage = if (key == "cleanupPercentage") toInt(value) else cleanupPercentage,
+            enableDiscovery = if (key == "enableDiscovery") toBoolean(value) else enableDiscovery,
+            blacklist = if (key == "blacklist") toString(value) else blacklist,
+            enableSkipPreLaunchPasteboardContent =
+                if (key == "enableSkipPreLaunchPasteboardContent") {
+                    toBoolean(value)
+                } else {
+                    enableSkipPreLaunchPasteboardContent
+                },
+            lastPasteboardChangeCount =
+                if (key == "lastPasteboardChangeCount") {
+                    toInt(
+                        value,
+                    )
+                } else {
+                    lastPasteboardChangeCount
+                },
+            enablePasteboardListening =
+                if (key == "enablePasteboardListening") {
+                    toBoolean(
+                        value,
+                    )
+                } else {
+                    enablePasteboardListening
+                },
+            sourceExclusions = if (key == "sourceExclusions") toString(value) else sourceExclusions,
+            sourceExclusionPatterns =
+                if (key == "sourceExclusionPatterns") toString(value) else sourceExclusionPatterns,
+            showTutorial = if (key == "showTutorial") toBoolean(value) else showTutorial,
+            maxBackupFileSize = if (key == "maxBackupFileSize") toLong(value) else maxBackupFileSize,
+            largeFileDestinationPath =
+                if (key == "largeFileDestinationPath") {
+                    toString(value)
+                } else {
+                    largeFileDestinationPath
+                },
+            enabledSyncFileSizeLimit =
+                if (key == "enabledSyncFileSizeLimit") {
+                    toBoolean(
+                        value,
+                    )
+                } else {
+                    enabledSyncFileSizeLimit
+                },
+            maxSyncFileSize = if (key == "maxSyncFileSize") toLong(value) else maxSyncFileSize,
+            maxNonFilePasteSize = if (key == "maxNonFilePasteSize") toLong(value) else maxNonFilePasteSize,
+            useDefaultStoragePath = if (key == "useDefaultStoragePath") toBoolean(value) else useDefaultStoragePath,
+            storagePath = if (key == "storagePath") toString(value) else storagePath,
+            enableSoundEffect = if (key == "enableSoundEffect") toBoolean(value) else enableSoundEffect,
+            enableUrlPreview = if (key == "enableUrlPreview") toBoolean(value) else enableUrlPreview,
+            legacySoftwareCompatibility =
+                if (key == "legacySoftwareCompatibility") {
+                    toBoolean(value)
+                } else {
+                    legacySoftwareCompatibility
+                },
+            pastePrimaryTypeOnly = if (key == "pastePrimaryTypeOnly") toBoolean(value) else pastePrimaryTypeOnly,
+            useNetworkInterfaces = if (key == "useNetworkInterfaces") toString(value) else useNetworkInterfaces,
+            enableClipboardRelay = if (key == "enableClipboardRelay") toBoolean(value) else enableClipboardRelay,
+            enableAutoPastePull = if (key == "enableAutoPastePull") toBoolean(value) else enableAutoPastePull,
+            enableAutoPullWriteClipboard =
+                if (key == "enableAutoPullWriteClipboard") toBoolean(value) else enableAutoPullWriteClipboard,
+            ocrLanguage = if (key == "ocrLanguage") toString(value) else ocrLanguage,
+            useManualProxy = if (key == "useManualProxy") toBoolean(value) else useManualProxy,
+            proxyType = if (key == "proxyType") toString(value) else proxyType,
+            proxyHost = if (key == "proxyHost") toString(value) else proxyHost,
+            proxyPort = if (key == "proxyPort") toString(value) else proxyPort,
+            showGrantAccessibility = if (key == "showGrantAccessibility") toBoolean(value) else showGrantAccessibility,
+            showInstallCliPrompt = if (key == "showInstallCliPrompt") toBoolean(value) else showInstallCliPrompt,
+            showPastePanelButton = if (key == "showPastePanelButton") toBoolean(value) else showPastePanelButton,
+            showScreenshotPreview = if (key == "showScreenshotPreview") toBoolean(value) else showScreenshotPreview,
+            pastePanelButtonSize = if (key == "pastePanelButtonSize") toString(value) else pastePanelButtonSize,
+            enableSyncText = if (key == "enableSyncText") toBoolean(value) else enableSyncText,
+            enableSyncUrl = if (key == "enableSyncUrl") toBoolean(value) else enableSyncUrl,
+            enableSyncHtml = if (key == "enableSyncHtml") toBoolean(value) else enableSyncHtml,
+            enableSyncRtf = if (key == "enableSyncRtf") toBoolean(value) else enableSyncRtf,
+            enableSyncImage = if (key == "enableSyncImage") toBoolean(value) else enableSyncImage,
+            enableSyncFile = if (key == "enableSyncFile") toBoolean(value) else enableSyncFile,
+            enableSyncColor = if (key == "enableSyncColor") toBoolean(value) else enableSyncColor,
+            enableRemoteShowPairingCode =
+                if (key == "enableRemoteShowPairingCode") {
+                    toBoolean(value)
+                } else {
+                    enableRemoteShowPairingCode
+                },
+            enableMcpServer = if (key == "enableMcpServer") toBoolean(value) else enableMcpServer,
+            mcpServerPort = if (key == "mcpServerPort") toInt(value) else mcpServerPort,
+            networkBlockingDismissedFingerprint =
+                if (key == "networkBlockingDismissedFingerprint") {
+                    toString(value)
+                } else {
+                    networkBlockingDismissedFingerprint
+                },
+            lastSeenChangelogVersion =
+                if (key == "lastSeenChangelogVersion") {
+                    toString(value)
+                } else {
+                    lastSeenChangelogVersion
+                },
+            linuxRemoteDesktopRestoreToken =
+                if (key == "linuxRemoteDesktopRestoreToken") {
+                    toString(value)
+                } else {
+                    linuxRemoteDesktopRestoreToken
+                },
+            autoDownloadUpdate = if (key == "autoDownloadUpdate") toBoolean(value) else autoDownloadUpdate,
+        )
+}

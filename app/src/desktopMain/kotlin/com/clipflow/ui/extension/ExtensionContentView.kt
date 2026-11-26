@@ -1,0 +1,115 @@
+package com.clipflow.ui.extension
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import com.clipflow.ui.CliTool
+import com.clipflow.ui.LocalThemeExtState
+import com.clipflow.ui.MCP
+import com.clipflow.ui.NavigationManager
+import com.clipflow.ui.OCR
+import com.clipflow.ui.Plugins
+import com.clipflow.ui.base.IconData
+import com.clipflow.ui.base.SectionHeader
+import com.clipflow.ui.settings.SettingListItem
+import com.clipflow.ui.settings.SettingSectionCard
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.tiny
+import com.clipflow.ui.theme.AppUISize.xxxxLarge
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Code
+import com.composables.icons.materialsymbols.rounded.Document_scanner
+import com.composables.icons.materialsymbols.rounded.Extension
+import com.composables.icons.materialsymbols.rounded.Terminal
+import org.koin.compose.koinInject
+
+@Composable
+fun ExtensionContentView() {
+    val navigateManager = koinInject<NavigationManager>()
+    val themeExt = LocalThemeExtState.current
+
+    var isProxyExpanded by remember { mutableStateOf(false) }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(tiny),
+    ) {
+        item {
+            ProxySection(
+                isExpanded = isProxyExpanded,
+                onToggle = { isProxyExpanded = !isProxyExpanded },
+            )
+        }
+
+        item {
+            SectionHeader("extension", topPadding = medium)
+        }
+
+        item {
+            SettingSectionCard {
+                SettingListItem(
+                    title = "mcp_settings",
+                    subtitle = "mcp_settings_desc",
+                    icon =
+                        IconData(
+                            imageVector = MaterialSymbols.Rounded.Code,
+                            iconColor = themeExt.indigoIconColor,
+                        ),
+                    onClick = {
+                        navigateManager.navigate(MCP)
+                    },
+                )
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListItem(
+                    title = "ocr_settings",
+                    subtitle = "language_module_settings",
+                    icon =
+                        IconData(
+                            imageVector = MaterialSymbols.Rounded.Document_scanner,
+                            iconColor = themeExt.violetIconColor,
+                        ),
+                    onClick = {
+                        navigateManager.navigate(OCR)
+                    },
+                )
+                // Terminal command page (D6 PATH integration, revised
+                // 2026-08-21): shown on every platform — the sub-page adapts
+                // (macOS install/repair, elsewhere status + availability)
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListItem(
+                    title = "command_line",
+                    subtitle = "install_cli_tool_desc",
+                    icon =
+                        IconData(
+                            imageVector = MaterialSymbols.Rounded.Terminal,
+                            iconColor = themeExt.greenIconColor,
+                        ),
+                    onClick = {
+                        navigateManager.navigate(CliTool)
+                    },
+                )
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListItem(
+                    title = "plugins",
+                    subtitle = "plugins_desc",
+                    icon =
+                        IconData(
+                            imageVector = MaterialSymbols.Rounded.Extension,
+                            iconColor = themeExt.purpleIconColor,
+                        ),
+                    onClick = {
+                        navigateManager.navigate(Plugins)
+                    },
+                )
+            }
+        }
+    }
+}

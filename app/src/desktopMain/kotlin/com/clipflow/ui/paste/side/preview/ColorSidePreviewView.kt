@@ -1,0 +1,39 @@
+package com.clipflow.ui.paste.side.preview
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import com.clipflow.paste.item.PasteColor
+import com.clipflow.ui.paste.PasteDataScope
+import com.clipflow.utils.ColorAccessibility.getBestTextColor
+
+@Composable
+fun PasteDataScope.ColorSidePreviewView() {
+    getPasteItem(PasteColor::class).let { pasteColor ->
+        SidePasteLayoutView(
+            pasteBottomContent = {},
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color(pasteColor.color)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = pasteColor.toHexString(),
+                    style =
+                        MaterialTheme.typography.headlineSmall.copy(
+                            color = Color(pasteColor.color).getBestTextColor(),
+                        ),
+                )
+            }
+        }
+    }
+}

@@ -8,7 +8,7 @@ Default to communicating with developers in Chinese (中文), unless explicitly 
 
 ## Build Commands
 
-CrossPaste is a Kotlin Multiplatform application using Gradle. Key commands:
+ClipFlow is a Kotlin Multiplatform application using Gradle. Key commands:
 
 - **Run the application**: `./gradlew app:run`
 - **Build**: `./gradlew build`
@@ -18,7 +18,7 @@ CrossPaste is a Kotlin Multiplatform application using Gradle. Key commands:
 - **Code style check**: `./gradlew ktlintCheck`
 - **Run single test**: `./gradlew test --tests "ClassName.testMethodName"` (add `-PintegrationTests` if the class is `@IntegrationTest`-tagged)
 
-When adding a test suite that spawns processes, performs real pairing/sync handshakes, or sleeps on wall-clock time (roughly: anything adding multiple seconds), tag the class with `@com.crosspaste.test.IntegrationTest` so it lands in the integration tier instead of slowing every PR.
+When adding a test suite that spawns processes, performs real pairing/sync handshakes, or sleeps on wall-clock time (roughly: anything adding multiple seconds), tag the class with `@com.clipflow.test.IntegrationTest` so it lands in the integration tier instead of slowing every PR.
 
 First startup downloads JBR (JetBrains Runtime) and gradle dependencies automatically.
 
@@ -32,7 +32,7 @@ First startup downloads JBR (JetBrains Runtime) and gradle dependencies automati
 - **DI**: Koin for dependency injection across modules
 
 ### Multi-Platform Strategy
-CrossPaste is a cross-platform product covering Desktop (this repo) and Mobile (Android/iOS, separate private repos). The `commonMain` code is designed to be shared across both Desktop and Mobile platforms — it gets copied to the mobile projects. When modifying `commonMain` code, always consider mobile compatibility: avoid desktop-only APIs, keep interfaces platform-agnostic, and ensure changes won't break mobile consumers.
+ClipFlow is a cross-platform product covering Desktop (this repo) and Mobile (Android/iOS, separate private repos). The `commonMain` code is designed to be shared across both Desktop and Mobile platforms — it gets copied to the mobile projects. When modifying `commonMain` code, always consider mobile compatibility: avoid desktop-only APIs, keep interfaces platform-agnostic, and ensure changes won't break mobile consumers.
 
 ### Key Source Directories
 - `app/src/commonMain/kotlin/`: Shared business logic across Desktop and Mobile platforms
@@ -41,7 +41,7 @@ CrossPaste is a cross-platform product covering Desktop (this repo) and Mobile (
 - `app/src/commonMain/sqldelight/`: Database schema definitions
 
 ### Core Module Organization
-The application follows a modular architecture defined in `CrossPasteModule.kt`:
+The application follows a modular architecture defined in `ClipFlowModule.kt`:
 
 - **appModule()**: Core application services and managers
 - **sqlDelightModule()**: Database layer and DAOs
@@ -89,7 +89,7 @@ SQLDelight manages database schema in `.sq` files:
 The desktop suite is split into two tiers via the JUnit 5 tag `integration`. Every new test class MUST be assigned to the correct tier:
 
 - **Fast tier (default, untagged)** — runs on every PR (`./gradlew app:desktopTest`) and must stay fast. A fast-tier test uses mocks/fakes, in-memory SQLite (`TestDriverFactory`), and virtual time (`runTest`); a whole class should finish in well under a second.
-- **Integration tier (`@com.crosspaste.test.IntegrationTest` on the class)** — excluded from PRs; runs with `-PintegrationTests`, which the release and beta build workflows pass, so published artifacts are always gated by the full suite.
+- **Integration tier (`@com.clipflow.test.IntegrationTest` on the class)** — excluded from PRs; runs with `-PintegrationTests`, which the release and beta build workflows pass, so published artifacts are always gated by the full suite.
 
 Tag a class `@IntegrationTest` if it does ANY of the following:
 - spawns real child processes (e.g. headless daemon launch tests)
@@ -121,10 +121,10 @@ the values the test passed in.
 
 - **Commit messages**: Use emoji prefixes (see `doc/en/CommitMessage.md`)
 - **Code formatting**: Enforced via ktlint with exclusions for generated code
-- **Package structure**: Organized by feature domain under `com.crosspaste`
+- **Package structure**: Organized by feature domain under `com.clipflow`
 - **Platform files**: Use `.desktop.kt` suffix for platform-specific implementations
-- **Utility usage**: Always check `com.crosspaste.utils` and prefer existing utility classes (e.g., FileUtils, DateUtils, StringUtils) instead of implementing new ones.
-- **UI sizing**: When adding size/dimension constants in UI code, prefer using values defined in `com.crosspaste.ui.theme.AppUISize` instead of inline literal `dp`/`sp` values.
+- **Utility usage**: Always check `com.clipflow.utils` and prefer existing utility classes (e.g., FileUtils, DateUtils, StringUtils) instead of implementing new ones.
+- **UI sizing**: When adding size/dimension constants in UI code, prefer using values defined in `com.clipflow.ui.theme.AppUISize` instead of inline literal `dp`/`sp` values.
 - **Thread-safe collections**: In `commonMain` code, prefer thread-safe Map/Set from `io.ktor.util.collections` (e.g., `ConcurrentMap`, `ConcurrentSet`) over platform-specific concurrent collections.
 - **Coroutine `delay`**: Always pass a `Duration` to `kotlinx.coroutines.delay`, never a raw number. Write `delay(280L.milliseconds)` / `delay(2.seconds)`, not `delay(280L)` or `delay(2000)`. Add `import kotlin.time.Duration.Companion.milliseconds` (or `.seconds`) as needed. This applies to both production code and tests.
 - **Koin module declaration order**: Inside a Koin `module { }`, declaration order is irrelevant at runtime (`single { }` is lazy and resolved by type — confirmed no `createdAtStart` eager singletons), so order serves readability only. Group bindings by functional sub-domain with `// region <Name>` / `// endregion` markers, and sort alphabetically by bound type within each group. Do not order the whole module strictly alphabetically (it scatters related bindings). Modules that are already cohesive single-responsibility functions need no extra regions.

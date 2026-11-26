@@ -4,7 +4,7 @@ import type { WsEnvelope, WsConnectionStatus } from "./ws-types";
 import type { StoredDevice } from "@/shared/storage/device-store";
 import { DeviceStore } from "@/shared/storage/device-store";
 import { KeyStore, toInt8Array } from "@/shared/storage/key-store";
-import { CrossPasteHash, createSecureMessageProcessor } from "@/shared/core";
+import { ClipFlowHash, createSecureMessageProcessor } from "@/shared/core";
 import { ADVERTISED_PAIRING_VERSION } from "@/shared/sync/protocol-version";
 
 const BACKOFF_BASE_MS = 1_000;
@@ -42,7 +42,7 @@ const defaultDeps: WsManagerDeps = {
     }
     return createSecureMessageProcessor(
       toInt8Array(keys.cryptPrivateKey),
-      CrossPasteHash.base64Decode(peerKeyB64),
+      ClipFlowHash.base64Decode(peerKeyB64),
     );
   },
   pairingVersion: ADVERTISED_PAIRING_VERSION,

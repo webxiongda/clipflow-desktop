@@ -1,0 +1,424 @@
+package com.clipflow.ui.settings
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults.buttonColors
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.window.DialogProperties
+import com.clipflow.i18n.GlobalCopywriter
+import com.clipflow.ui.LocalAppSizeValueState
+import com.clipflow.ui.LocalThemeExtState
+import com.clipflow.ui.base.AnimatedSegmentedControl
+import com.clipflow.ui.base.DialogActionButton
+import com.clipflow.ui.base.DialogButtonType
+import com.clipflow.ui.base.IconData
+import com.clipflow.ui.base.SectionHeader
+import com.clipflow.ui.base.measureTextWidth
+import com.clipflow.ui.theme.AppUISize.large2X
+import com.clipflow.ui.theme.AppUISize.massive
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.small2X
+import com.clipflow.ui.theme.AppUISize.tiny
+import com.clipflow.ui.theme.AppUISize.xLarge
+import com.clipflow.ui.theme.AppUISize.xxLarge
+import com.clipflow.ui.theme.AppUISize.xxxLarge
+import com.clipflow.ui.theme.AppUISize.xxxxLarge
+import com.clipflow.utils.Quadruple
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Delete
+import com.composables.icons.materialsymbols.rounded.Tag
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.koin.compose.koinInject
+import kotlin.time.Duration.Companion.milliseconds
+
+@Composable
+fun StorageStatisticsScope.StorageStatisticsHeader() {
+    val copywriter = koinInject<GlobalCopywriter>()
+
+    SectionHeader("storage_statistics") {
+        val all = copywriter.getText("all")
+        val tagged = copywriter.getText("tagged")
+        val selectedItem =
+            if (allOrTagged) {
+                all
+            } else {
+                tagged
+            }
+
+        AnimatedSegmentedControl(
+            items = listOf(all, tagged),
+            selectedItem = selectedItem,
+            onItemSelected = {
+                scope.launch {
+                    allOrTagged = it == all
+                    refresh()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+fun StorageStatisticsScope.StorageStatisticsContentView() {
+    val copywriter = koinInject<GlobalCopywriter>()
+    val themeExt = LocalThemeExtState.current
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            refresh()
+            delay(5000.milliseconds)
+        }
+    }
+
+    var showClearConfirmDialog by remember { mutableStateOf(false) }
+
+    val pasteboard = IconData(MaterialSymbols.Rounded.Tag, themeExt.blueIconColor)
+
+    val pasteTypes: Array<Quadruple<String, IconData, Long?, String?>> =
+        arrayOf(
+            Quadruple("pasteboard", pasteboard, pasteCount, pasteFormatSize),
+            Quadruple("text", themeExt.textTypeIconData, textCount, textFormatSize),
+            Quadruple("color", themeExt.colorTypeIconData, colorCount, colorFormatSize),
+            Quadruple("link", themeExt.urlTypeIconData, urlCount, urlFormatSize),
+            Quadruple("html", themeExt.htmlTypeIconData, htmlCount, htmlFormatSize),
+            Quadruple("rtf", themeExt.rtfTypeIconData, rtfCount, rtfFormatSize),
+            Quadruple("image", themeExt.imageTypeIconData, imageCount, imageFormatSize),
+            Quadruple("file", themeExt.fileTypeIconData, fileCount, fileFormatSize),
+        )
+
+    val typeTextStyle =
+        MaterialTheme.typography.bodyMedium.copy(
+            fontWeight = FontWeight.Medium,
+        )
+
+    // Plain derived value: assigning a remembered state during composition would
+    // schedule a redundant recomposition on every pass.
+    var nameMaxWidth = massive
+    for (property in pasteTypes) {
+        nameMaxWidth =
+            maxOf(
+                nameMaxWidth,
+                measureTextWidth(copywriter.getText(property.first), typeTextStyle),
+            )
+    }
+
+    SettingSectionCard {
+        Column {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(xxxxLarge)
+                        .padding(horizontal = medium),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier =
+                        Modifier
+                            .widthIn(min = nameMaxWidth + xLarge + medium)
+                            .wrapContentHeight(),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        copywriter.getText("type"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.weight(0.2f),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    Text(
+                        copywriter.getText("count"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.weight(0.3f),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    Text(
+                        copywriter.getText("size"),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+
+            HorizontalDivider()
+
+            pasteTypes.forEachIndexed { index, quadruple ->
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(xxxxLarge)
+                            .padding(horizontal = medium),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        modifier = Modifier.size(large2X),
+                        imageVector = quadruple.second.imageVector,
+                        contentDescription = null,
+                        tint = quadruple.second.color,
+                    )
+
+                    Spacer(modifier = Modifier.width(xLarge))
+
+                    Text(
+                        text = copywriter.getText(quadruple.first),
+                        modifier = Modifier.width(nameMaxWidth),
+                        style = typeTextStyle,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+
+                    Row(
+                        modifier = Modifier.weight(0.2f),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        if (quadruple.third != null) {
+                            Text(
+                                text = quadruple.third.toString(),
+                                style =
+                                    MaterialTheme.typography.bodyMedium.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                    ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(xLarge))
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.weight(0.3f),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        if (quadruple.fourth != null) {
+                            Text(
+                                text = quadruple.fourth,
+                                style =
+                                    MaterialTheme.typography.bodyMedium.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                    ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(xLarge))
+                        }
+                    }
+                }
+
+                if (index != pasteTypes.size - 1) {
+                    HorizontalDivider(modifier = Modifier.padding(start = xxxLarge))
+                }
+            }
+
+            HorizontalDivider()
+
+            SettingListItem(
+                title = "clear_untagged_pasteboards",
+                icon = IconData(MaterialSymbols.Rounded.Delete, themeExt.redIconColor),
+                trailingContent = {
+                    Button(
+                        onClick = { showClearConfirmDialog = true },
+                        enabled = !cleaning,
+                        modifier = Modifier.height(xxLarge),
+                        contentPadding = PaddingValues(horizontal = small2X),
+                        colors =
+                            buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error,
+                                contentColor = MaterialTheme.colorScheme.onError,
+                            ),
+                    ) {
+                        Text(
+                            copywriter.getText("clear_now"),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    if (showClearConfirmDialog) {
+        ClearUntaggedConfirmDialog(
+            copywriter = copywriter,
+            onDismiss = { showClearConfirmDialog = false },
+            onConfirm = {
+                showClearConfirmDialog = false
+                cleaning = true
+                scope.launch {
+                    try {
+                        pasteDao.markAllDeleteExceptTagged()
+                    } finally {
+                        cleaning = false
+                        refresh()
+                    }
+                }
+            },
+        )
+    }
+
+    if (cleaning) {
+        CleaningProgressDialog(copywriter)
+    }
+}
+
+/**
+ * Clearing every untagged pasteboard is irreversible and was previously a
+ * single click away; ask first so a stray click on the red button cannot wipe
+ * the history.
+ */
+@Composable
+private fun ClearUntaggedConfirmDialog(
+    copywriter: GlobalCopywriter,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val appSizeValue = LocalAppSizeValueState.current
+
+    AlertDialog(
+        modifier = Modifier.width(appSizeValue.dialogWidth),
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = tiny),
+            ) {
+                Icon(
+                    imageVector = MaterialSymbols.Rounded.Delete,
+                    contentDescription = null,
+                    modifier = Modifier.size(xLarge),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Spacer(modifier = Modifier.width(medium))
+                Text(
+                    text = copywriter.getText("clear_untagged_pasteboards"),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = tiny),
+                verticalArrangement = Arrangement.spacedBy(xLarge),
+            ) {
+                Text(
+                    text = copywriter.getText("clear_untagged_pasteboards_confirm_desc"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.2f,
+                )
+            }
+        },
+        confirmButton = {
+            DialogActionButton(
+                text = copywriter.getText("delete"),
+                type = DialogButtonType.ERROR,
+                onClick = onConfirm,
+            )
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(copywriter.getText("cancel"))
+            }
+        },
+    )
+}
+
+@Composable
+private fun CleaningProgressDialog(copywriter: GlobalCopywriter) {
+    val appSizeValue = LocalAppSizeValueState.current
+
+    AlertDialog(
+        modifier = Modifier.width(appSizeValue.dialogWidth),
+        properties =
+            DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+            ),
+        onDismissRequest = {},
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = tiny),
+            ) {
+                Icon(
+                    imageVector = MaterialSymbols.Rounded.Delete,
+                    contentDescription = null,
+                    modifier = Modifier.size(xLarge),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+                Spacer(modifier = Modifier.width(medium))
+                Text(
+                    text = copywriter.getText("cleaning_in_progress"),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = tiny),
+                verticalArrangement = Arrangement.spacedBy(xLarge),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = copywriter.getText("cleaning_untagged_in_progress_desc"),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.2f,
+                )
+                CircularProgressIndicator()
+            }
+        },
+        confirmButton = {},
+    )
+}

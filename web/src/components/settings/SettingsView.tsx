@@ -16,7 +16,7 @@ import {
   getLanguageName,
 } from "@/shared/i18n/use-i18n";
 import { useTheme, type ThemeMode } from "@/shared/theme/use-theme";
-import { openCrossPasteWebInBrowser } from "@/shared/app/ui-support";
+import { openClipFlowWebInBrowser } from "@/shared/app/ui-support";
 import { APP_VERSION } from "@/shared/app/version.generated";
 import { AboutView } from "./AboutView";
 
@@ -100,7 +100,7 @@ function DownloadBanner() {
   return (
     <button
       onClick={() => {
-        void openCrossPasteWebInBrowser("download");
+        void openClipFlowWebInBrowser("download");
       }}
       className="group relative flex items-center gap-3 w-full overflow-hidden rounded-[14px] px-4 py-3 text-left bg-gradient-to-r from-settings-indigo-bg via-settings-blue-bg to-settings-purple-bg ring-1 ring-settings-indigo/10 hover:ring-settings-indigo/30 hover:shadow-md shadow-sm transition-shadow"
     >
@@ -112,7 +112,7 @@ function DownloadBanner() {
           {t("get_native_app")}
         </span>
         <span className="text-xs text-m3-on-surface-variant truncate">
-          {t("download")} · crosspaste.com
+          {t("download")} · clipflow.com
         </span>
       </div>
       <ArrowRight

@@ -1,6 +1,6 @@
 /**
  * Sync protocol version. Must match desktop `SyncApi.VERSION`
- * (app/src/commonMain/kotlin/com/crosspaste/net/SyncApi.kt).
+ * (app/src/commonMain/kotlin/com/clipflow/net/SyncApi.kt).
  * Desktop uses strict integer equality — no forward compatibility.
  */
 export const PROTOCOL_VERSION = 3;

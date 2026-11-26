@@ -1,4 +1,4 @@
-import { CrossPasteWebService } from "./cross-paste-web-service";
+import { ClipFlowWebService } from "./clip-flow-web-service";
 
 /**
  * Extension-side equivalent of the Kotlin [UISupport] interface — only the
@@ -16,8 +16,8 @@ export function openUrlInBrowser(url: string): void {
   }
 }
 
-/** Open the localized CrossPaste website — [path] is appended after the locale segment. */
-export async function openCrossPasteWebInBrowser(path = ""): Promise<void> {
-  const url = await CrossPasteWebService.getLocalizedUrl(path);
+/** Open the localized ClipFlow website — [path] is appended after the locale segment. */
+export async function openClipFlowWebInBrowser(path = ""): Promise<void> {
+  const url = await ClipFlowWebService.getLocalizedUrl(path);
   openUrlInBrowser(url);
 }

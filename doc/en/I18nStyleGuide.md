@@ -85,7 +85,7 @@ English is the source every other language is translated from, so it is written 
 and reviewed against where it appears in the UI.
 
 - Sentence case: "Copy failed", not "Copy Failed". Proper nouns keep their casing
-  (macOS, PATH, MCP, CrossPaste).
+  (macOS, PATH, MCP, ClipFlow).
 - Periods follow the text's job. Buttons, labels, section titles, and single-sentence
   toasts have none. Explanatory paragraphs and multi-sentence messages end with a
   period.

@@ -1,0 +1,224 @@
+package com.clipflow.ui.settings
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import com.clipflow.ui.LocalSmallSettingItemState
+import com.clipflow.ui.base.IconData
+import com.clipflow.ui.theme.AppUIColors
+import com.clipflow.ui.theme.AppUISize.huge
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.tiny5X
+import com.clipflow.ui.theme.AppUISize.xxLarge
+import com.clipflow.ui.theme.AppUISize.xxxxLarge
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Chevron_right
+
+@Composable
+fun SettingSectionCard(
+    modifier: Modifier = Modifier,
+    containerColor: Color = AppUIColors.sectionCardBackground,
+    border: BorderStroke? = BorderStroke(tiny5X, AppUIColors.sectionCardBorder),
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        color = containerColor,
+        border = border,
+        content = { Column(content = content) },
+    )
+}
+
+@Composable
+expect fun SettingListItem(
+    title: String,
+    subtitle: String? = null,
+    icon: IconData? = null,
+    trailingContent: @Composable (() -> Unit)? = {
+        Icon(MaterialSymbols.Rounded.Chevron_right, null)
+    },
+    onClick: (() -> Unit)? = null,
+)
+
+@Composable
+expect fun SettingListItem(
+    titleContent: @Composable (() -> Unit),
+    subtitle: String? = null,
+    icon: IconData? = null,
+    trailingContent: @Composable (() -> Unit)? = {
+        Icon(MaterialSymbols.Rounded.Chevron_right, null)
+    },
+    onClick: (() -> Unit)? = null,
+)
+
+@Composable
+expect fun SettingListItem(
+    title: String,
+    subtitleContent: @Composable (() -> Unit),
+    icon: IconData? = null,
+    trailingContent: @Composable (() -> Unit)? = {
+        Icon(MaterialSymbols.Rounded.Chevron_right, null)
+    },
+    onClick: (() -> Unit)? = null,
+)
+
+@Composable
+expect fun SettingListSwitchItem(
+    title: String,
+    subtitle: String? = null,
+    icon: IconData? = null,
+    checked: Boolean,
+    enabled: Boolean = true,
+    onCheckedChange: (Boolean) -> Unit,
+)
+
+@Composable
+fun <T> SegmentedControlSettingsRow(
+    title: String,
+    options: List<T>,
+    selectedOptionIndex: Int,
+    onOptionSelected: (Int, T) -> Unit,
+    modifier: Modifier = Modifier,
+    icon: IconData? = null,
+    twoLine: Boolean = false,
+    optionLabel: (T) -> String = { it.toString() },
+) {
+    val isSmallItem = LocalSmallSettingItemState.current
+
+    val segmentedRow: @Composable () -> Unit = {
+        SingleChoiceSegmentedButtonRow(
+            modifier = if (twoLine) Modifier.fillMaxWidth().padding(horizontal = medium) else Modifier,
+        ) {
+            options.forEachIndexed { index, item ->
+                SegmentedButton(
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                    onClick = { onOptionSelected(index, item) },
+                    selected = index == selectedOptionIndex,
+                    label = {
+                        Text(
+                            text = optionLabel(item),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    if (twoLine) {
+        Column(
+            modifier = modifier.fillMaxWidth().padding(medium),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (icon != null) {
+                    icon.IconContent(isSmallItem)
+                    Spacer(Modifier.width(medium))
+                }
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                )
+            }
+            Spacer(Modifier.height(medium))
+            segmentedRow()
+        }
+    } else {
+        Row(
+            modifier =
+                modifier
+                    .fillMaxWidth()
+                    .height(if (isSmallItem) xxxxLarge else huge)
+                    .padding(horizontal = medium),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (icon != null) {
+                    icon.IconContent(isSmallItem)
+                    Spacer(Modifier.width(medium))
+                }
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.width(medium))
+            }
+
+            SingleChoiceSegmentedButtonRow(
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .then(if (isSmallItem) Modifier.height(xxLarge) else Modifier),
+            ) {
+                options.forEachIndexed { index, item ->
+                    SegmentedButton(
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                        onClick = { onOptionSelected(index, item) },
+                        selected = index == selectedOptionIndex,
+                        label = {
+                            Text(
+                                text = optionLabel(item),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                            )
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Rows that only make sense while their parent switch is on. Expanding and
+ * collapsing them smoothly keeps the card from jumping in height the moment
+ * the switch is flipped.
+ */
+@Composable
+fun DependentSettings(
+    visible: Boolean,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut(),
+    ) {
+        Column(content = content)
+    }
+}

@@ -10,16 +10,16 @@ BUILD_DIR=$(mktemp -d)
 source "$ROOT_DIR/.github/scripts/rpm_signing_key.sh"
 trap 'rm -rf "$BUILD_DIR" "$GNUPGHOME"' EXIT
 # The packages carry the signing key's public half so a fresh install can
-# verify the dnf repository they subscribe to (crosspaste.repo).
-gpg --batch --armor --export "$GPG_FINGERPRINT" > "$BUILD_DIR/RPM-GPG-KEY-CrossPaste"
-rpm --import "$BUILD_DIR/RPM-GPG-KEY-CrossPaste"
+# verify the dnf repository they subscribe to (clipflow.repo).
+gpg --batch --armor --export "$GPG_FINGERPRINT" > "$BUILD_DIR/RPM-GPG-KEY-ClipFlow"
+rpm --import "$BUILD_DIR/RPM-GPG-KEY-ClipFlow"
 
 shopt -s nullglob
 EXPECTED_VERSION=
 for ARCH_PAIR in amd64:x86_64 aarch64:aarch64; do
     ARCH_TOKEN=${ARCH_PAIR%%:*}
     RPM_ARCH=${ARCH_PAIR##*:}
-    ARCHIVES=("$OUTPUT_DIR"/crosspaste-*-linux-"$ARCH_TOKEN".tar.gz)
+    ARCHIVES=("$OUTPUT_DIR"/clipflow-*-linux-"$ARCH_TOKEN".tar.gz)
     if [ "${#ARCHIVES[@]}" -ne 1 ]; then
         echo "Error: Expected one Linux $ARCH_TOKEN tarball in $OUTPUT_DIR, found ${#ARCHIVES[@]}" >&2
         exit 1
@@ -27,7 +27,7 @@ for ARCH_PAIR in amd64:x86_64 aarch64:aarch64; do
 
     TAR_FILE=${ARCHIVES[0]}
     ARCHIVE_NAME=$(basename "$TAR_FILE")
-    if [[ ! $ARCHIVE_NAME =~ ^crosspaste-([0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)-linux-${ARCH_TOKEN}\.tar\.gz$ ]]; then
+    if [[ ! $ARCHIVE_NAME =~ ^clipflow-([0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)-linux-${ARCH_TOKEN}\.tar\.gz$ ]]; then
         echo "Error: Unexpected Conveyor archive name: $ARCHIVE_NAME" >&2
         exit 1
     fi
@@ -43,7 +43,7 @@ for ARCH_PAIR in amd64:x86_64 aarch64:aarch64; do
     TOP_DIR="$BUILD_DIR/$RPM_ARCH"
     mkdir -p "$TOP_DIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
     cp "$TAR_FILE" "$ROOT_DIR/app/script/linux_start.sh" "$ROOT_DIR/LICENSE" \
-        "$ROOT_DIR/.github/packaging/crosspaste.repo" "$BUILD_DIR/RPM-GPG-KEY-CrossPaste" "$TOP_DIR/SOURCES/"
+        "$ROOT_DIR/.github/packaging/clipflow.repo" "$BUILD_DIR/RPM-GPG-KEY-ClipFlow" "$TOP_DIR/SOURCES/"
 
     # Exclude only capabilities that the payload itself supplies, preserving
     # versioned ELF requirements on glibc, X11, Wayland and other system libs.
@@ -65,7 +65,7 @@ for ARCH_PAIR in amd64:x86_64 aarch64:aarch64; do
     test -n "$PRIVATE_REQUIRES"
     rm -rf "$TOP_DIR/private-libs"
 
-    rpmbuild -bb "$ROOT_DIR/.github/packaging/crosspaste.spec" \
+    rpmbuild -bb "$ROOT_DIR/.github/packaging/clipflow.spec" \
         --target "$RPM_ARCH" \
         --define "_topdir $TOP_DIR" \
         --define "_tmppath $BUILD_DIR" \
@@ -74,7 +74,7 @@ for ARCH_PAIR in amd64:x86_64 aarch64:aarch64; do
         --define "private_requires ^($PRIVATE_REQUIRES)$" \
         --define "archive_name $ARCHIVE_NAME"
 
-    RPM_FILE="$TOP_DIR/RPMS/$RPM_ARCH/crosspaste-$APP_VERSION-$APP_REVISION.$RPM_ARCH.rpm"
+    RPM_FILE="$TOP_DIR/RPMS/$RPM_ARCH/clipflow-$APP_VERSION-$APP_REVISION.$RPM_ARCH.rpm"
     rpm --define "_gpg_name $GPG_FINGERPRINT" --define "_gpg_path $GNUPGHOME" --addsign "$RPM_FILE"
     rpm -K "$RPM_FILE" | grep -F 'digests signatures OK'
     rpm -qp --qf '%{NAME} %{VERSION}-%{RELEASE} %{ARCH} %{RSAHEADER:pgpsig}\n' "$RPM_FILE"

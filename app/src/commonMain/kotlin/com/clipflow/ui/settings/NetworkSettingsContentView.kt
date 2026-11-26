@@ -1,0 +1,390 @@
+package com.clipflow.ui.settings
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.dto.sync.SyncInfo
+import com.clipflow.i18n.GlobalCopywriter
+import com.clipflow.net.NetworkInterfaceService
+import com.clipflow.ui.LocalScrollContentBottomPadding
+import com.clipflow.ui.LocalSmallSettingItemState
+import com.clipflow.ui.LocalThemeExtState
+import com.clipflow.ui.base.Counter
+import com.clipflow.ui.base.IconData
+import com.clipflow.ui.base.SectionHeader
+import com.clipflow.ui.devices.SyncScopeFactory
+import com.clipflow.ui.theme.AppUISize.huge
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.mediumRoundedCornerShape
+import com.clipflow.ui.theme.AppUISize.tiny
+import com.clipflow.ui.theme.AppUISize.tiny4X
+import com.clipflow.ui.theme.AppUISize.tiny5X
+import com.clipflow.ui.theme.AppUISize.xxxxLarge
+import com.clipflow.utils.getJsonUtils
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Content_paste
+import com.composables.icons.materialsymbols.rounded.Docs
+import com.composables.icons.materialsymbols.rounded.Power
+import com.composables.icons.materialsymbols.rounded.Shield
+import com.composables.icons.materialsymbols.rounded.Sync
+import com.composables.icons.materialsymbols.rounded.Sync_alt
+import com.composables.icons.materialsymbols.rounded.Visibility
+import org.koin.compose.koinInject
+
+@Composable
+fun NetworkSettingsContentView(syncExtContent: @Composable () -> Unit = {}) {
+    val configManager = koinInject<CommonConfigManager>()
+    val copywriter = koinInject<GlobalCopywriter>()
+    val networkInterfaceService = koinInject<NetworkInterfaceService>()
+    val syncScopeFactory = koinInject<SyncScopeFactory>()
+    val themeExt = LocalThemeExtState.current
+
+    val jsonUtils = getJsonUtils()
+
+    val config by configManager.config.collectAsState()
+
+    // Re-read whenever the OS reports a network change, so an interface brought up
+    // after this page was first opened (a cable, a hotspot, Windows ICS) still shows
+    // up. null while the first enumeration is in flight, so the list can show a
+    // loading row instead of briefly looking like there is nothing to pick.
+    val networkInterfaces by remember(networkInterfaceService) {
+        networkInterfaceService.allNetworkInterfaces
+    }.collectAsState(initial = null)
+
+    val useNetworkInterfaces: List<String> =
+        remember(config.useNetworkInterfaces) {
+            jsonUtils.JSON.decodeFromString<List<String>>(config.useNetworkInterfaces)
+        }
+
+    val blacklist =
+        remember(config) {
+            val list: List<SyncInfo> = jsonUtils.JSON.decodeFromString(config.blacklist)
+            mutableStateListOf(*list.toTypedArray())
+        }
+
+    // Derived straight from config so the row tracks port changes instead of
+    // freezing the value read on first composition
+    val portText =
+        if (config.port <= 0) {
+            copywriter.getText("unknown")
+        } else {
+            config.port.toString()
+        }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(bottom = LocalScrollContentBottomPadding.current),
+        verticalArrangement = Arrangement.spacedBy(tiny),
+    ) {
+        item {
+            SectionHeader("local_devices")
+        }
+
+        item {
+            SettingSectionCard {
+                SettingListSwitchItem(
+                    title = "allow_discovery_by_new_devices",
+                    icon = IconData(MaterialSymbols.Rounded.Visibility, themeExt.blueIconColor),
+                    checked = config.enableDiscovery,
+                ) { enableDiscovery ->
+                    if (enableDiscovery) {
+                        // Offline right now: persist the intent with an empty selection and
+                        // let the resolver auto-select once the network comes back.
+                        val newUseNetworkInterfaces =
+                            listOfNotNull(networkInterfaceService.getPreferredNetworkInterface()?.name)
+                        val newUseNetworkInterfacesJson =
+                            jsonUtils.JSON.encodeToString(newUseNetworkInterfaces)
+                        configManager.updateConfig(
+                            listOf("useNetworkInterfaces", "enableDiscovery"),
+                            listOf(newUseNetworkInterfacesJson, true),
+                        )
+                    } else {
+                        configManager.updateConfig(
+                            listOf("useNetworkInterfaces", "enableDiscovery"),
+                            listOf("[]", false),
+                        )
+                    }
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                when (val interfaces = networkInterfaces) {
+                    null -> NetworkInterfacesLoadingRow()
+                    else ->
+                        if (interfaces.isEmpty()) {
+                            SettingListItem(
+                                title = "no_network_interface_available",
+                                icon = null,
+                                trailingContent = null,
+                            )
+                        } else {
+                            SettingCheckboxView(
+                                count = interfaces.size,
+                                getCurrentCheckboxValue = { index ->
+                                    interfaces[index].name in useNetworkInterfaces
+                                },
+                                onChange = { index, isChecked ->
+                                    val currentInterface = interfaces[index].name
+                                    val newUseNetworkInterfaces =
+                                        if (isChecked) {
+                                            useNetworkInterfaces + currentInterface
+                                        } else {
+                                            useNetworkInterfaces - currentInterface
+                                        }
+                                    val newUseNetworkInterfacesJson =
+                                        jsonUtils.JSON.encodeToString(newUseNetworkInterfaces)
+                                    configManager.updateConfig(
+                                        listOf("useNetworkInterfaces", "enableDiscovery"),
+                                        listOf(newUseNetworkInterfacesJson, newUseNetworkInterfaces.isNotEmpty()),
+                                    )
+                                },
+                                content = { index ->
+                                    val info = interfaces[index]
+                                    Text(
+                                        text = info.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    if (info.isLikelyVirtual) {
+                                        VirtualBadge(copywriter.getText("virtual"))
+                                    }
+                                },
+                                trailingContent = { index ->
+                                    val info = interfaces[index]
+                                    Text(
+                                        text = "${info.hostAddress}/${info.networkPrefixLength}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                            )
+                        }
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListItem(
+                    title = "port",
+                    icon = IconData(MaterialSymbols.Rounded.Power, themeExt.purpleIconColor),
+                    trailingContent = {
+                        Text(
+                            text = portText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                )
+            }
+        }
+
+        item {
+            SectionHeader("sync_settings", topPadding = medium)
+        }
+
+        item {
+            SettingSectionCard {
+                SettingListSwitchItem(
+                    title = "encrypted_sync",
+                    icon = IconData(MaterialSymbols.Rounded.Shield, themeExt.greenIconColor),
+                    checked = config.enableEncryptSync,
+                ) {
+                    configManager.updateConfig("enableEncryptSync", it)
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListSwitchItem(
+                    title = "sync_file_size_limit",
+                    icon = IconData(MaterialSymbols.Rounded.Sync_alt, themeExt.indigoIconColor),
+                    checked = config.enabledSyncFileSizeLimit,
+                ) { newEnabledSyncFileSizeLimit ->
+                    configManager.updateConfig("enabledSyncFileSizeLimit", newEnabledSyncFileSizeLimit)
+                }
+                DependentSettings(visible = config.enabledSyncFileSizeLimit) {
+                    HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                    SettingListItem(
+                        title = "max_sync_file_size",
+                        icon = IconData(MaterialSymbols.Rounded.Docs, themeExt.redIconColor),
+                        trailingContent = {
+                            Counter(defaultValue = config.maxSyncFileSize, unit = "MB", rule = {
+                                it >= 0
+                            }) { currentMaxSyncFileSize ->
+                                configManager.updateConfig("maxSyncFileSize", currentMaxSyncFileSize)
+                            }
+                        },
+                    )
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListSwitchItem(
+                    title = "auto_pull_missed_pastes",
+                    icon = IconData(MaterialSymbols.Rounded.Sync, themeExt.blueIconColor),
+                    checked = config.enableAutoPastePull,
+                ) { enableAutoPastePull ->
+                    configManager.updateConfig("enableAutoPastePull", enableAutoPastePull)
+                }
+                DependentSettings(visible = config.enableAutoPastePull) {
+                    HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                    SettingListSwitchItem(
+                        title = "auto_pull_write_clipboard",
+                        icon = IconData(MaterialSymbols.Rounded.Content_paste, themeExt.purpleIconColor),
+                        checked = config.enableAutoPullWriteClipboard,
+                    ) { enableAutoPullWriteClipboard ->
+                        configManager.updateConfig("enableAutoPullWriteClipboard", enableAutoPullWriteClipboard)
+                    }
+                }
+                syncExtContent()
+            }
+        }
+
+        item {
+            SectionHeader("sync_content_types", topPadding = medium)
+        }
+
+        item {
+            SettingSectionCard {
+                SettingListSwitchItem(
+                    title = "sync_text",
+                    icon = themeExt.textTypeIconData,
+                    checked = config.enableSyncText,
+                ) { enableSyncText ->
+                    configManager.updateConfig("enableSyncText", enableSyncText)
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListSwitchItem(
+                    title = "sync_url",
+                    icon = themeExt.urlTypeIconData,
+                    checked = config.enableSyncUrl,
+                ) { enableSyncUrl ->
+                    configManager.updateConfig("enableSyncUrl", enableSyncUrl)
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListSwitchItem(
+                    title = "sync_html",
+                    icon = themeExt.htmlTypeIconData,
+                    checked = config.enableSyncHtml,
+                ) { enableSyncHtml ->
+                    configManager.updateConfig("enableSyncHtml", enableSyncHtml)
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListSwitchItem(
+                    title = "sync_rtf",
+                    icon = themeExt.rtfTypeIconData,
+                    checked = config.enableSyncRtf,
+                ) { enableSyncRtf ->
+                    configManager.updateConfig("enableSyncRtf", enableSyncRtf)
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListSwitchItem(
+                    title = "sync_image",
+                    icon = themeExt.imageTypeIconData,
+                    checked = config.enableSyncImage,
+                ) { enableSyncImage ->
+                    configManager.updateConfig("enableSyncImage", enableSyncImage)
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListSwitchItem(
+                    title = "sync_file",
+                    icon = themeExt.fileTypeIconData,
+                    checked = config.enableSyncFile,
+                ) { enableSyncFile ->
+                    configManager.updateConfig("enableSyncFile", enableSyncFile)
+                }
+                HorizontalDivider(modifier = Modifier.padding(start = xxxxLarge))
+                SettingListSwitchItem(
+                    title = "sync_color",
+                    icon = themeExt.colorTypeIconData,
+                    checked = config.enableSyncColor,
+                ) { enableSyncColor ->
+                    configManager.updateConfig("enableSyncColor", enableSyncColor)
+                }
+            }
+        }
+
+        item {
+            SectionHeader("blacklist", topPadding = medium)
+        }
+
+        if (blacklist.isEmpty()) {
+            item {
+                SettingSectionCard {
+                    SettingListItem(
+                        title = "no_blocked_devices",
+                        icon = null,
+                        trailingContent = null,
+                    )
+                }
+            }
+        } else {
+            itemsIndexed(blacklist) { index, syncInfo ->
+                val currentIndex by rememberUpdatedState(index)
+                val currentSyncInfo by rememberUpdatedState(syncInfo)
+
+                val scope =
+                    remember(currentSyncInfo) {
+                        syncScopeFactory.createSyncScope(currentSyncInfo)
+                    }
+
+                scope.BlackListDeviceView()
+
+                if (currentIndex != blacklist.size - 1) {
+                    Spacer(modifier = Modifier.height(tiny))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NetworkInterfacesLoadingRow() {
+    val isSmallItem = LocalSmallSettingItemState.current
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(if (isSmallItem) xxxxLarge else huge)
+                .padding(horizontal = medium),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(medium),
+            strokeWidth = tiny4X,
+        )
+    }
+}
+
+@Composable
+private fun VirtualBadge(text: String) {
+    // Theme tokens instead of a fixed light-blue tint so the badge stays legible
+    // on the dark color scheme as well
+    val colorScheme = MaterialTheme.colorScheme
+    Text(
+        text = text,
+        style =
+            MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.SemiBold,
+            ),
+        color = colorScheme.onSecondaryContainer,
+        modifier =
+            Modifier
+                .background(colorScheme.secondaryContainer, mediumRoundedCornerShape)
+                .border(tiny5X, colorScheme.outlineVariant, mediumRoundedCornerShape)
+                .padding(horizontal = tiny, vertical = tiny4X),
+    )
+}

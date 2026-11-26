@@ -1,0 +1,187 @@
+package com.clipflow.paste
+
+import com.clipflow.app.AppInfo
+import com.clipflow.db.TestDriverFactory
+import com.clipflow.db.createDatabase
+import com.clipflow.db.paste.SqlPasteDao
+import com.clipflow.paste.item.ColorPasteItem
+import com.clipflow.paste.item.CreatePasteItemHelper.createColorPasteItem
+import com.clipflow.paste.item.CreatePasteItemHelper.createHtmlPasteItem
+import com.clipflow.paste.item.CreatePasteItemHelper.createTextPasteItem
+import com.clipflow.paste.item.CreatePasteItemHelper.createUrlPasteItem
+import com.clipflow.paste.item.DefaultPasteItemReader
+import com.clipflow.paste.item.HtmlPasteItem
+import com.clipflow.paste.item.PasteItem
+import com.clipflow.paste.item.PasteItemProperties
+import com.clipflow.paste.item.TextPasteItem
+import com.clipflow.paste.item.UrlPasteItem
+import com.clipflow.utils.DateUtils
+import com.clipflow.utils.getJsonUtils
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class PasteContentEditorTest {
+
+    // Eagerly initialize JsonUtils to avoid circular class initialization between
+    // PasteItem.Companion (which calls getJsonUtils()) and TextPasteItem
+    @Suppress("unused")
+    private val jsonUtils = getJsonUtils()
+
+    private val searchContentService =
+        object : SearchContentService {
+            override fun createSearchContent(
+                source: String?,
+                searchContentList: List<String>,
+            ): String = searchContentList.joinToString(" ")
+
+            override fun createSearchTerms(queryString: String): List<String> = listOf(queryString)
+        }
+
+    private val pasteItemReader = DefaultPasteItemReader()
+
+    private val pasteDao =
+        SqlPasteDao(
+            appInfo = AppInfo("test-instance", "1.0.0", "abc", "testUser"),
+            database = createDatabase(TestDriverFactory()),
+            pasteItemReader = pasteItemReader,
+            searchContentService = searchContentService,
+            taskSubmitter = mockk(relaxed = true),
+            userDataPathProvider = mockk(relaxed = true),
+        )
+
+    private val editor = PasteContentEditor(pasteDao, pasteItemReader, searchContentService)
+
+    private suspend fun storePaste(
+        appearItem: PasteItem,
+        companions: List<PasteItem>,
+        pasteType: PasteType,
+    ): PasteData {
+        val id =
+            pasteDao.createPasteData(
+                PasteData(
+                    appInstanceId = "test-instance",
+                    pasteAppearItem = appearItem,
+                    pasteCollection = PasteCollection(companions),
+                    pasteType = pasteType.type,
+                    size = appearItem.size + companions.sumOf { it.size },
+                    hash = appearItem.hash,
+                    pasteState = PasteState.LOADED,
+                    createTime = DateUtils.nowEpochMilliseconds(),
+                ),
+            )
+        return assertNotNull(pasteDao.getNoDeletePasteData(id))
+    }
+
+    @Test
+    fun `html edit re-derives the plain-text companion and drops underivable ones`() =
+        runTest {
+            val html =
+                createHtmlPasteItem(
+                    html = "<p>old words</p>",
+                    extraInfo = buildJsonObject { put(PasteItemProperties.BACKGROUND, 0xFF112233.toInt()) },
+                )
+            val pasteData =
+                storePaste(
+                    appearItem = html,
+                    companions =
+                        listOf(
+                            createTextPasteItem(text = "old words"),
+                            createUrlPasteItem(url = "https://old.example.com"),
+                        ),
+                    pasteType = PasteType.HTML_TYPE,
+                )
+            val newHtml = "<p>new words</p>"
+
+            val outcome = editor.updateContent(pasteData, newHtml, pasteData.hash)
+
+            assertIs<PasteContentEditor.EditOutcome.Updated>(outcome)
+            val stored = assertNotNull(pasteDao.getNoDeletePasteData(pasteData.id))
+            val storedHtml = assertIs<HtmlPasteItem>(stored.pasteAppearItem)
+            assertEquals(newHtml, storedHtml.html)
+            assertEquals(html.getBackgroundColor(), storedHtml.getBackgroundColor())
+            val companions = stored.pasteCollection.pasteItems
+            assertEquals(1, companions.size)
+            assertEquals("new words", assertIs<TextPasteItem>(companions.single()).text)
+            assertTrue(companions.none { it is UrlPasteItem })
+        }
+
+    @Test
+    fun `html edit stores a new background and keeps it when none is given`() =
+        runTest {
+            val pasteData =
+                storePaste(
+                    appearItem =
+                        createHtmlPasteItem(
+                            html = "<p>old words</p>",
+                            extraInfo = buildJsonObject { put(PasteItemProperties.BACKGROUND, 0xFF112233.toInt()) },
+                        ),
+                    companions = listOf(createTextPasteItem(text = "old words")),
+                    pasteType = PasteType.HTML_TYPE,
+                )
+            val newBackground = 0xFF445566.toInt()
+
+            val recolored = editor.updateHtml(pasteData, "<p>new words</p>", newBackground, pasteData.hash)
+
+            assertIs<PasteContentEditor.EditOutcome.Updated>(recolored)
+            val afterRecolor = assertNotNull(pasteDao.getNoDeletePasteData(pasteData.id))
+            val recoloredHtml = assertIs<HtmlPasteItem>(afterRecolor.pasteAppearItem)
+            assertEquals("<p>new words</p>", recoloredHtml.html)
+            assertEquals(newBackground, recoloredHtml.getBackgroundColor())
+            assertEquals("new words", assertIs<TextPasteItem>(afterRecolor.pasteCollection.pasteItems.single()).text)
+
+            val kept = editor.updateHtml(afterRecolor, "<p>newer words</p>", null, afterRecolor.hash)
+
+            assertIs<PasteContentEditor.EditOutcome.Updated>(kept)
+            val afterKeep = assertNotNull(pasteDao.getNoDeletePasteData(pasteData.id))
+            assertEquals(newBackground, assertIs<HtmlPasteItem>(afterKeep.pasteAppearItem).getBackgroundColor())
+        }
+
+    @Test
+    fun `color edit re-derives the plain-text companion`() =
+        runTest {
+            val red = createColorPasteItem(color = 0xFFFF0000.toInt())
+            val pasteData =
+                storePaste(
+                    appearItem = red,
+                    companions = listOf(createTextPasteItem(text = red.toHexString())),
+                    pasteType = PasteType.COLOR_TYPE,
+                )
+            val blue = 0xFF0000FF.toInt()
+
+            val outcome = editor.updateColor(pasteData, blue)
+
+            assertIs<PasteContentEditor.EditOutcome.Updated>(outcome)
+            val stored = assertNotNull(pasteDao.getNoDeletePasteData(pasteData.id))
+            val storedColor = assertIs<ColorPasteItem>(stored.pasteAppearItem)
+            assertEquals(blue, storedColor.color)
+            val companion = assertIs<TextPasteItem>(stored.pasteCollection.pasteItems.single())
+            assertEquals(storedColor.toHexString(), companion.text)
+        }
+
+    @Test
+    fun `edit from a stale snapshot is rejected instead of overwriting`() =
+        runTest {
+            val pasteData =
+                storePaste(
+                    appearItem = createTextPasteItem(text = "first"),
+                    companions = listOf(),
+                    pasteType = PasteType.TEXT_TYPE,
+                )
+            assertIs<PasteContentEditor.EditOutcome.Updated>(
+                editor.updateContent(pasteData, "second", pasteData.hash),
+            )
+
+            val outcome = editor.updateContent(pasteData, "third", pasteData.hash)
+
+            assertIs<PasteContentEditor.EditOutcome.Conflict>(outcome)
+            val stored = assertNotNull(pasteDao.getNoDeletePasteData(pasteData.id))
+            assertEquals("second", assertIs<TextPasteItem>(stored.pasteAppearItem).text)
+        }
+}

@@ -1,7 +1,7 @@
-// Translates the text into the language picked from the submenu: CROSSPASTE_ACTION carries
+// Translates the text into the language picked from the submenu: CLIPFLOW_ACTION carries
 // the chosen action id, which is a Google language code.
 // JavaScript for Automation ships with every macOS, so the plugin needs no extra tools.
-// stdin: the paste as JSON (same shape as `crosspaste paste --json`).
+// stdin: the paste as JSON (same shape as `clipflow paste --json`).
 // stdout: the value run() returns. A thrown error exits non-zero and is shown to the user.
 // Cocoa rather than Foundation: the Foundation bridge alone does not expose the URL loading classes
 ObjC.import('Cocoa');
@@ -36,6 +36,6 @@ function translate(text, target) {
 function run() {
     const paste = JSON.parse(readStdin());
     const text = paste.content || paste.rawContent || '';
-    const target = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('CROSSPASTE_ACTION')) || 'en';
+    const target = ObjC.unwrap($.NSProcessInfo.processInfo.environment.objectForKey('CLIPFLOW_ACTION')) || 'en';
     return translate(text, target);
 }

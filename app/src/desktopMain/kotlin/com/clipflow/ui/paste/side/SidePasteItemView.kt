@@ -1,0 +1,207 @@
+package com.clipflow.ui.paste.side
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draganddrop.DragAndDropTransferAction
+import androidx.compose.ui.draganddrop.DragAndDropTransferData
+import androidx.compose.ui.draganddrop.DragAndDropTransferable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.paste.DesktopPasteMenuService
+import com.clipflow.paste.DesktopWriteTransferable
+import com.clipflow.paste.PasteData
+import com.clipflow.paste.TransferableProducer
+import com.clipflow.paste.pasteWriteScope
+import com.clipflow.ui.LocalDesktopAppSizeValueState
+import com.clipflow.ui.base.PasteContextMenuView
+import com.clipflow.ui.base.thresholdDragAndDropSource
+import com.clipflow.ui.paste.PasteDataScope
+import com.clipflow.ui.theme.AppUIColors
+import com.clipflow.ui.theme.AppUISize.highlightedCardElevation
+import com.clipflow.ui.theme.AppUISize.small3XRoundedCornerShape
+import com.clipflow.ui.theme.AppUISize.tiny6X
+import kotlinx.coroutines.runBlocking
+import org.koin.compose.koinInject
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+fun PasteDataScope.SidePasteItemView(
+    selected: Boolean,
+    isScrolling: Boolean,
+    onPress: (isShiftPressed: Boolean) -> Unit,
+    onDoubleTap: (isShiftPressed: Boolean) -> Unit,
+    pasteContent: @Composable PasteData.() -> Unit,
+) {
+    val configManager = koinInject<CommonConfigManager>()
+    val pasteMenuService = koinInject<DesktopPasteMenuService>()
+    val pasteProducer = koinInject<TransferableProducer>()
+
+    val appSizeValue = LocalDesktopAppSizeValueState.current
+
+    val currentOnPress by rememberUpdatedState(onPress)
+    val currentOnDoubleTap by rememberUpdatedState(onDoubleTap)
+    var isShiftPressed by remember { mutableStateOf(false) }
+
+    val graphicsLayer = rememberGraphicsLayer()
+    val hoverInteraction = remember { MutableInteractionSource() }
+    val isHovered by hoverInteraction.collectIsHoveredAsState()
+    val placeholderColor = AppUIColors.pasteBackground
+
+    Row(
+        modifier =
+            Modifier
+                .thresholdDragAndDropSource(
+                    drawDragDecoration = {
+                        // The graphics layer is empty until the pointer first rests
+                        // on this card. If a drag starts before that, fall back
+                        // to a blank tile sized to the source so the preview is
+                        // still visible — the drag itself shouldn't be blocked by
+                        // rendering state.
+                        if (graphicsLayer.size == IntSize.Zero) {
+                            drawRect(color = placeholderColor)
+                        } else {
+                            drawLayer(graphicsLayer)
+                        }
+                    },
+                ) { offset ->
+                    DragAndDropTransferData(
+                        transferable =
+                            DragAndDropTransferable(
+                                runBlocking {
+                                    pasteProducer
+                                        .produce(
+                                            pasteData = pasteData,
+                                            localOnly = true,
+                                            scope = configManager.getCurrentConfig().pasteWriteScope(),
+                                        )?.let {
+                                            it as DesktopWriteTransferable
+                                        } ?: DesktopWriteTransferable(LinkedHashMap())
+                                },
+                            ),
+                        supportedActions =
+                            listOf(
+                                DragAndDropTransferAction.Copy,
+                            ),
+                        dragDecorationOffset = offset,
+                        onTransferCompleted = {},
+                    )
+                }.size(appSizeValue.sidePasteSize)
+                .clip(small3XRoundedCornerShape)
+                .pointerInput(Unit) {
+                    // Read Shift off the press itself: tap callbacks carry no modifiers, and
+                    // modifier state tracked from key events goes stale whenever a key-up is
+                    // delivered elsewhere (e.g. while the window is hidden or not yet focused).
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.type == PointerEventType.Press) {
+                                isShiftPressed = event.keyboardModifiers.isShiftPressed
+                            }
+                        }
+                    }
+                }.pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = {
+                            currentOnPress(isShiftPressed)
+                            tryAwaitRelease()
+                        },
+                        onDoubleTap = {
+                            currentOnDoubleTap(isShiftPressed)
+                        },
+                    )
+                }.border(
+                    3.dp,
+                    // Highlight the selected item the same way whether the search input or the
+                    // paste list holds focus: while typing, the first match is the candidate that
+                    // Enter will paste, so it must read as clearly selected rather than a faint
+                    // preview.
+                    if (selected) {
+                        AppUIColors.importantColor
+                    } else {
+                        Color.Transparent
+                    },
+                    small3XRoundedCornerShape,
+                ),
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .hoverable(hoverInteraction)
+                    .drawWithContent {
+                        // Always render the visible content directly. The graphics
+                        // layer is only used to provide a drag preview, and a drag
+                        // can only start under the pointer, so only the hovered card
+                        // records it. Recording every visible card on every frame
+                        // doubled draw cost whenever anything on screen animated.
+                        drawContent()
+                        // Skip layer recording while the LazyRow is actively
+                        // scrolling. During fast recycling a freshly composed text
+                        // child can still have a null MultiParagraphLayoutCache,
+                        // and re-driving the child draw via record { drawContent() }
+                        // would crash. The previously recorded layer remains
+                        // available for any drag started mid-scroll.
+                        if (isHovered && !isScrolling) {
+                            try {
+                                graphicsLayer.record {
+                                    this@drawWithContent.drawContent()
+                                }
+                            } catch (_: IllegalStateException) {
+                                // Residual race on the first stable frame: keep
+                                // the prior recording and try again next frame.
+                            }
+                        }
+                    },
+        ) {
+            Card(
+                modifier =
+                    Modifier.fillMaxSize(),
+                shape = small3XRoundedCornerShape,
+                elevation = highlightedCardElevation,
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = AppUIColors.pasteBackground,
+                    ),
+                border =
+                    BorderStroke(
+                        width = tiny6X,
+                        color = AppUIColors.lightBorderColor,
+                    ),
+            ) {
+                PasteContextMenuView(
+                    items = pasteMenuService.pasteMenuItemsProvider(pasteData),
+                ) {
+                    pasteData.pasteContent()
+                }
+            }
+        }
+    }
+}

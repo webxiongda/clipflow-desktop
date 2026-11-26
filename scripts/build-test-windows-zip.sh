@@ -4,7 +4,7 @@
 #
 # It mirrors the CI "Prepare Dependency" + Conveyor steps, but:
 #   * uses appEnv=BETA  -> a packaged build with a real path provider that still
-#     honors a *loopback* CROSSPASTE_UPDATE_BASE_URL (serve on the same machine).
+#     honors a *loopback* CLIPFLOW_UPDATE_BASE_URL (serve on the same machine).
 #     NOTE: do NOT use appEnv=TEST for a packaged build — TEST makes
 #     DesktopAppPathProvider return `this` (meant only for mocked unit tests),
 #     which infinite-recurses in resolve() and crashes on startup.
@@ -46,7 +46,7 @@ if [ "$APP_ENV" = "DEVELOPMENT" ]; then
     exit 1
 fi
 if [ "$APP_ENV" = "PRODUCTION" ]; then
-    echo "WARNING: a PRODUCTION build only honors a loopback CROSSPASTE_UPDATE_BASE_URL;" >&2
+    echo "WARNING: a PRODUCTION build only honors a loopback CLIPFLOW_UPDATE_BASE_URL;" >&2
     echo "         BETA behaves the same here and is the intended test env." >&2
 fi
 

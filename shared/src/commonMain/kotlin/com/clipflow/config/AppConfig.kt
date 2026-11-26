@@ -1,0 +1,107 @@
+package com.clipflow.config
+
+interface AppConfig {
+    val language: String
+    val font: String
+    val isFollowSystemTheme: Boolean
+    val isDarkTheme: Boolean
+    val port: Int
+    val enableEncryptSync: Boolean
+    val enableExpirationCleanup: Boolean
+    val imageCleanTimeIndex: Int
+    val fileCleanTimeIndex: Int
+    val enableThresholdCleanup: Boolean
+
+    // MB
+    val maxStorage: Long
+    val cleanupPercentage: Int
+    val enableDiscovery: Boolean
+    val blacklist: String
+    val enableSkipPreLaunchPasteboardContent: Boolean
+    val lastPasteboardChangeCount: Int
+    val enablePasteboardListening: Boolean
+
+    // MB
+    val maxBackupFileSize: Long
+
+    // Where received files above maxBackupFileSize are written. Empty means the
+    // system Downloads folder, otherwise an absolute directory the user picked.
+    // Resolve it with AppConfig.resolveLargeFileDestination() rather than reading
+    // the raw string. Only affects new receives: each row stores its own basePath,
+    // so existing rows stay where they were written.
+    val largeFileDestinationPath: String
+    val enabledSyncFileSizeLimit: Boolean
+    val maxSyncFileSize: Long
+
+    // Always-on limit for non-file paste items (text/html/rtf/url/color);
+    // file and image pastes are governed by maxSyncFileSize instead. MB
+    val maxNonFilePasteSize: Long
+    val useDefaultStoragePath: Boolean
+    val storagePath: String
+    val enableSoundEffect: Boolean
+
+    // Fetch favicon and Open Graph metadata (title/preview image) for copied
+    // URLs; disabling avoids any background network request to the copied link
+    val enableUrlPreview: Boolean
+    val pastePrimaryTypeOnly: Boolean
+    val useNetworkInterfaces: String
+
+    // Sync content type controls
+    val enableSyncText: Boolean
+    val enableSyncUrl: Boolean
+    val enableSyncHtml: Boolean
+    val enableSyncRtf: Boolean
+    val enableSyncImage: Boolean
+    val enableSyncFile: Boolean
+    val enableSyncColor: Boolean
+    val enableRemoteShowPairingCode: Boolean
+
+    // Catch up on a trusted peer's pastes (missed while disconnected) through the
+    // incremental pull cursor whenever that peer becomes CONNECTED
+    val enableAutoPastePull: Boolean
+        get() = true
+
+    // Whether the newest paste fetched by a catch-up pull also replaces the
+    // system clipboard. Off by default: a catch-up runs in the background on
+    // reconnect and must not overwrite what the user has just copied locally
+    val enableAutoPullWriteClipboard: Boolean
+        get() = false
+
+    fun copy(
+        key: String,
+        value: Any,
+    ): AppConfig
+
+    companion object {
+        // For compatibility with different storage implementations
+        // it is convenient to read the correct configuration from the storage
+        fun toBoolean(any: Any): Boolean =
+            when (any) {
+                is Boolean -> any
+                is String -> any.toBoolean()
+                is Int -> any != 0
+                is Long -> any != 0L
+                else -> false
+            }
+
+        fun toInt(any: Any): Int =
+            when (any) {
+                is Int -> any
+                is String -> any.toIntOrNull() ?: 0
+                is Boolean -> if (any) 1 else 0
+                is Long -> any.toInt()
+                else -> 0
+            }
+
+        fun toLong(any: Any): Long =
+            when (any) {
+                is Long -> any
+                is String -> any.toLongOrNull() ?: 0L
+                is Boolean -> if (any) 1L else 0L
+                is Int -> any.toLong()
+                else -> 0L
+            }
+
+        fun toString(any: Any): String = any.toString()
+    }
+}

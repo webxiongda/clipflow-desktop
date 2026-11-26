@@ -1,4 +1,4 @@
-import { CrossPasteHash } from "@/shared/core";
+import { ClipFlowHash } from "@/shared/core";
 import { describe, expect, it } from "vitest";
 import { createWholeFileRequest, isValidWholeFilePayload } from "../ws-message-handler";
 
@@ -22,7 +22,7 @@ describe("whole-file WebSocket wire", () => {
       "file.txt": {
         type: "file",
         size: payload.byteLength,
-        hash: CrossPasteHash.hashBytes(bytes),
+        hash: ClipFlowHash.hashBytes(bytes),
       },
     };
 

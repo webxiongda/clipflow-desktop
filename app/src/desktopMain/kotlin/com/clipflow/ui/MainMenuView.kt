@@ -1,0 +1,335 @@
+package com.clipflow.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
+import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.compose.currentBackStackEntryAsState
+import com.clipflow.app.AppUpdateService
+import com.clipflow.app.DesktopAppLaunch
+import com.clipflow.app.DesktopAppLaunchState
+import com.clipflow.app.ExitMode
+import com.clipflow.config.DesktopConfigManager
+import com.clipflow.i18n.GlobalCopywriter
+import com.clipflow.net.NetworkProfileService
+import com.clipflow.ui.base.TutorialButton
+import com.clipflow.ui.theme.AppUISize.large
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.small2X
+import com.clipflow.ui.theme.AppUISize.small3X
+import com.clipflow.ui.theme.AppUISize.tiny
+import com.clipflow.ui.theme.AppUISize.tiny2X
+import com.clipflow.ui.theme.AppUISize.tiny3X
+import com.clipflow.ui.theme.AppUISize.tiny4X
+import com.clipflow.ui.theme.AppUISize.tiny5X
+import com.clipflow.ui.theme.AppUISize.tinyRoundedCornerShape
+import com.clipflow.ui.theme.AppUISize.xxxLarge
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Auto_awesome
+import com.composables.icons.materialsymbols.rounded.Devices
+import com.composables.icons.materialsymbols.rounded.Download
+import com.composables.icons.materialsymbols.rounded.Exit_to_app
+import com.composables.icons.materialsymbols.rounded.Extension
+import com.composables.icons.materialsymbols.rounded.Info
+import com.composables.icons.materialsymbols.rounded.Keyboard
+import com.composables.icons.materialsymbols.rounded.Refresh
+import com.composables.icons.materialsymbols.rounded.Settings
+import com.composables.icons.materialsymbols.rounded.Share
+import com.composables.icons.materialsymbols.rounded.Upload
+import com.composables.icons.materialsymbols.rounded.Vpn_key
+import com.composables.icons.materialsymbols.rounded.Warning
+import io.github.z4kn4fein.semver.Version
+import org.koin.compose.koinInject
+
+@Composable
+fun MainMenuView() {
+    val appLaunch = koinInject<DesktopAppLaunch>()
+    val appLaunchState = koinInject<DesktopAppLaunchState>()
+    val appUpdateService = koinInject<AppUpdateService>()
+    val configManager = koinInject<DesktopConfigManager>()
+    val navigateManage = koinInject<NavigationManager>()
+    val networkProfileService = koinInject<NetworkProfileService>()
+
+    val primaryMenuList =
+        remember {
+            listOf(
+                MainMenuItem("devices", Devices, MaterialSymbols.Rounded.Devices),
+                MainMenuItem("pairing_code", PairingCode, MaterialSymbols.Rounded.Vpn_key),
+                MainMenuItem("settings", Settings, MaterialSymbols.Rounded.Settings),
+                MainMenuItem("extension", Extension, MaterialSymbols.Rounded.Extension),
+            )
+        }
+
+    val networkDiagnosis by networkProfileService.diagnosis.collectAsState()
+    val showNetworkWarning = networkDiagnosis.isLikelyBlocking()
+
+    val secondaryMenuList =
+        remember {
+            listOf(
+                MainMenuItem("import", Import, MaterialSymbols.Rounded.Download),
+                MainMenuItem("export", Export, MaterialSymbols.Rounded.Upload),
+                MainMenuItem("shortcut_keys", ShortcutKeys, MaterialSymbols.Rounded.Keyboard),
+                MainMenuItem("share", Share, MaterialSymbols.Rounded.Share),
+                MainMenuItem("about", About, MaterialSymbols.Rounded.Info),
+            )
+        }
+
+    val config by configManager.config.collectAsState()
+    val currentVersion by appUpdateService.currentVersion.collectAsState()
+
+    // Seed the baseline once, when no "last seen" version has been recorded yet:
+    // - brand-new install -> seed the current version so the badge never shows,
+    //   since there is nothing the user has "missed".
+    // - existing user upgrading into this feature -> seed a floor version so the
+    //   current release's changelog is highlighted exactly once.
+    LaunchedEffect(currentVersion) {
+        if (configManager.config.value.lastSeenChangelogVersion
+                .isBlank()
+        ) {
+            val seed =
+                if (appLaunchState.firstLaunch) {
+                    currentVersion.toString()
+                } else {
+                    "0.0.0"
+                }
+            configManager.updateConfig("lastSeenChangelogVersion", seed)
+        }
+    }
+
+    val showChangelogBadge =
+        remember(config.lastSeenChangelogVersion, currentVersion) {
+            config.lastSeenChangelogVersion.takeIf { it.isNotBlank() }?.let { lastSeen ->
+                runCatching { Version.parse(lastSeen) < currentVersion }.getOrDefault(false)
+            } ?: false
+        }
+
+    val firstLaunchCompleted by appLaunch.firstLaunchCompleted.collectAsState()
+    val navController = LocalNavHostController.current
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val destination = backStackEntry?.destination
+    val sidebarDestination =
+        if (destination?.hasRoute<NotificationCenterRoute>() == true) {
+            navController.previousBackStackEntry?.destination
+        } else {
+            destination
+        }
+    val rootRouteName = sidebarDestination?.let(::getRootRouteName)
+    val exitApplication = LocalExitApplication.current
+
+    // The menu is designed for the full 700dp window, but the window height is
+    // clamped to the usable screen area on small/heavily scaled displays (#4759).
+    // heightIn(min = viewport) keeps SpaceBetween pinning the bottom group when
+    // everything fits, while verticalScroll takes over once it no longer does.
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .heightIn(min = maxHeight)
+                    .padding(bottom = medium),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = tiny),
+                verticalArrangement = Arrangement.spacedBy(tiny4X),
+            ) {
+                primaryMenuList.forEach { item ->
+                    MainMenuItemView(
+                        title = item.title,
+                        icon = item.icon,
+                        selected = rootRouteName == item.route.name,
+                        onClick = { navigateManage.navigateAndClearStack(item.route) },
+                    )
+                }
+            }
+
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = tiny, end = tiny),
+                verticalArrangement = Arrangement.spacedBy(tiny4X),
+            ) {
+                if (showNetworkWarning) {
+                    MainMenuItemView(
+                        title = "network_warning",
+                        icon = MaterialSymbols.Rounded.Warning,
+                        selected = false,
+                        onClick = { networkProfileService.showWarning() },
+                        tintColor = LocalThemeExtState.current.warning.color,
+                    )
+                }
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = tiny3X),
+                    thickness = tiny5X,
+                    color = MaterialTheme.colorScheme.outlineVariant,
+                )
+
+                Spacer(modifier = Modifier.height(tiny3X))
+
+                if (firstLaunchCompleted && config.showTutorial) {
+                    Box(modifier = Modifier.padding(horizontal = tiny, vertical = tiny3X)) {
+                        TutorialButton()
+                    }
+                }
+
+                secondaryMenuList.forEach { item ->
+                    MainMenuItemView(
+                        title = item.title,
+                        icon = item.icon,
+                        selected = rootRouteName == item.route.name,
+                        onClick = { navigateManage.navigateAndClearStack(item.route) },
+                        compact = true,
+                    )
+                }
+
+                MainMenuItemView(
+                    title = "change_log",
+                    icon = MaterialSymbols.Rounded.Auto_awesome,
+                    selected = rootRouteName == ChangeLog.NAME,
+                    onClick = { navigateManage.navigateAndClearStack(ChangeLog) },
+                    compact = true,
+                    showBadge = showChangelogBadge,
+                )
+
+                MainMenuItemView(
+                    title = "check_for_updates",
+                    icon = MaterialSymbols.Rounded.Refresh,
+                    selected = false,
+                    // Single entry point for every channel (same as the tray's check):
+                    // portable-zip re-arms the update dialog (or reports "no new version"),
+                    // others delegate to Store / Conveyor / browser. Avoids a "fake check"
+                    // that only navigated without any feedback.
+                    onClick = { appUpdateService.tryTriggerUpdate() },
+                    compact = true,
+                )
+
+                MainMenuItemView(
+                    title = "quit",
+                    icon = MaterialSymbols.Rounded.Exit_to_app,
+                    selected = false,
+                    onClick = { exitApplication(ExitMode.EXIT) },
+                    compact = true,
+                    tintColor = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun MainMenuItemView(
+    title: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    compact: Boolean = false,
+    tintColor: Color? = null,
+    showBadge: Boolean = false,
+) {
+    val copywriter = koinInject<GlobalCopywriter>()
+
+    val containerColor =
+        if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            Color.Transparent
+        }
+
+    val contentColor =
+        tintColor
+            ?: if (selected) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+
+    val itemHeight = if (compact) (xxxLarge - tiny4X) else xxxLarge
+    val iconSize = if (compact) medium else large
+
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(itemHeight)
+                .clip(tinyRoundedCornerShape)
+                .background(containerColor)
+                .clickable(onClick = onClick)
+                .padding(horizontal = small2X),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(small3X),
+    ) {
+        Box {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(iconSize),
+                tint = contentColor,
+            )
+            if (showBadge) {
+                Box(
+                    modifier =
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .size(tiny2X)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.error),
+                )
+            }
+        }
+        Text(
+            text = copywriter.getText(title),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = contentColor,
+            style =
+                MaterialTheme.typography.bodyMedium.copy(
+                    fontSize = if (compact) 13.sp else 14.sp,
+                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                    letterSpacing = 0.2.sp,
+                ),
+        )
+    }
+}
+
+data class MainMenuItem(
+    val title: String,
+    val route: Route,
+    val icon: ImageVector,
+)

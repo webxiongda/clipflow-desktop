@@ -154,7 +154,7 @@ jobs:
           CALCULATED_REVISION=$(git rev-list --count HEAD)
           if [ "$CALCULATED_REVISION" = "${{ env.REVISION }}" ]; then
             echo "Calculated revision matches the one in GitHub environment."
-            echo -e "\nrevision=$CALCULATED_REVISION" >> app/src/desktopMain/resources/crosspaste-version.properties
+            echo -e "\nrevision=$CALCULATED_REVISION" >> app/src/desktopMain/resources/clipflow-version.properties
             echo "Revision has been written to properties file."
           else
             echo "Error: Calculated revision ($CALCULATED_REVISION) does not match the one in GitHub environment (${{ env.REVISION }})."
@@ -232,7 +232,7 @@ jobs:
       # GitHub artifacts drop the executable bit; restore it or the packaged
       # mac CLI would ship unexecutable.
       - name: Restore CLI executable permissions
-        run: chmod +x cli/dist/*/crosspaste-cli
+        run: chmod +x cli/dist/*/clipflow-cli
 
       # Same version source as the build-macos CLI step, so every platform's
       # CLI reports the identical full version by construction.
@@ -317,12 +317,12 @@ jobs:
       # would reject (wrong Version, or a second, headless Application that
       # needs a HeadlessAppBypass waiver), that lost the CLI (#5190) or that
       # lost its firewall rules (#5287): the manifest must carry Version
-      # x.y.z.0, exactly one visible <Application>, the app\bin\crosspaste-cli.exe
+      # x.y.z.0, exactly one visible <Application>, the app\bin\clipflow-cli.exe
       # alias extension with both aliases and the windows.firewallRules
-      # extension for bin\CrossPaste.exe, and the package must contain both
+      # extension for bin\ClipFlow.exe, and the package must contain both
       # exes. The verified file is then moved into
       # output/ under an unambiguous name (the site MSIX is
-      # crosspaste-<version>-<revision>.x64.msix) so it is uploaded to the
+      # clipflow-<version>-<revision>.x64.msix) so it is uploaded to the
       # versioned OSS prefix and listed in checksum.txt for
       # scripts/publish-msstore.sh. It is deliberately NOT part of the update
       # site, which was snapshotted before this step.
@@ -349,17 +349,17 @@ jobs:
           # check stays bound to that extension but not to attribute order.
           alias_ext=$(grep -o '<[^>]*Category="windows.appExecutionAlias"[^>]*>' store-manifest.xml || true)
           [ -n "$alias_ext" ] || { echo "Store manifest lacks the execution alias extension"; exit 1; }
-          printf '%s\n' "$alias_ext" | grep -q 'Executable="app\\bin\\crosspaste-cli.exe"' || { echo "Store manifest execution alias extension does not target app\\bin\\crosspaste-cli.exe"; exit 1; }
-          grep -q 'Alias="crosspaste.exe"' store-manifest.xml || { echo "Store manifest lacks the crosspaste.exe execution alias"; exit 1; }
-          grep -q 'Alias="crosspaste-cli.exe"' store-manifest.xml || { echo "Store manifest lacks the crosspaste-cli.exe execution alias"; exit 1; }
+          printf '%s\n' "$alias_ext" | grep -q 'Executable="app\\bin\\clipflow-cli.exe"' || { echo "Store manifest execution alias extension does not target app\\bin\\clipflow-cli.exe"; exit 1; }
+          grep -q 'Alias="clipflow.exe"' store-manifest.xml || { echo "Store manifest lacks the clipflow.exe execution alias"; exit 1; }
+          grep -q 'Alias="clipflow-cli.exe"' store-manifest.xml || { echo "Store manifest lacks the clipflow-cli.exe execution alias"; exit 1; }
           grep -q 'Category="windows.firewallRules"' store-manifest.xml || { echo "Store manifest lacks the windows.firewallRules extension"; exit 1; }
-          grep -q 'FirewallRules Executable="bin\\CrossPaste.exe"' store-manifest.xml || { echo "Store manifest firewall rules do not target bin\\CrossPaste.exe"; exit 1; }
+          grep -q 'FirewallRules Executable="bin\\ClipFlow.exe"' store-manifest.xml || { echo "Store manifest firewall rules do not target bin\\ClipFlow.exe"; exit 1; }
           grep -q 'IPProtocol="TCP"' store-manifest.xml || { echo "Store manifest lacks the TCP firewall rule"; exit 1; }
           grep -q 'IPProtocol="UDP"' store-manifest.xml || { echo "Store manifest lacks the UDP firewall rule"; exit 1; }
           # No grep -q here: an early exit would SIGPIPE unzip and trip pipefail.
-          unzip -Z1 "${files[0]}" | grep -x 'app/bin/crosspaste-cli.exe' > /dev/null || { echo "Store MSIX does not contain app/bin/crosspaste-cli.exe"; exit 1; }
-          unzip -Z1 "${files[0]}" | grep -x 'bin/CrossPaste.exe' > /dev/null || { echo "Store MSIX does not contain bin/CrossPaste.exe, the firewall rules' target"; exit 1; }
-          mv "${files[0]}" "output/crosspaste-${{ env.VERSION }}-store.x64.msix"
+          unzip -Z1 "${files[0]}" | grep -x 'app/bin/clipflow-cli.exe' > /dev/null || { echo "Store MSIX does not contain app/bin/clipflow-cli.exe"; exit 1; }
+          unzip -Z1 "${files[0]}" | grep -x 'bin/ClipFlow.exe' > /dev/null || { echo "Store MSIX does not contain bin/ClipFlow.exe, the firewall rules' target"; exit 1; }
+          mv "${files[0]}" "output/clipflow-${{ env.VERSION }}-store.x64.msix"
           rm -rf output-store store-manifest.xml
 
       - name: Package AppImage
@@ -375,27 +375,27 @@ jobs:
       # key without a passphrase, dedicated to this channel. Generate and
       # store it once with
       #   gpg --batch --pinentry-mode loopback --passphrase '' \
-      #     --quick-generate-key 'CrossPaste <support@crosspaste.com>' rsa4096 sign never
-      #   gpg --armor --export-secret-keys 'CrossPaste <support@crosspaste.com>' \
+      #     --quick-generate-key 'ClipFlow <support@clipflow.com>' rsa4096 sign never
+      #   gpg --armor --export-secret-keys 'ClipFlow <support@clipflow.com>' \
       #     | gh secret set RPM_SIGNING_KEY
       # and keep a backup of the secret key outside GitHub: rotating it
       # requires every RPM user to accept a new key. The matching public key
       # (gpg --armor --export) is written by the scripts into the packages
-      # (/etc/pki/rpm-gpg/RPM-GPG-KEY-CrossPaste) and the repository root
-      # (site/rpm/RPM-GPG-KEY-CrossPaste); nothing key-related is committed.
+      # (/etc/pki/rpm-gpg/RPM-GPG-KEY-ClipFlow) and the repository root
+      # (site/rpm/RPM-GPG-KEY-ClipFlow); nothing key-related is committed.
       - name: Package RPM (x86_64 and aarch64)
         run: |
-          docker build -t crosspaste-rpm-build -f .github/packaging/Dockerfile.rpm .github/packaging
-          docker run --rm -e RPM_SIGNING_KEY -v "$GITHUB_WORKSPACE:/workspace" crosspaste-rpm-build
+          docker build -t clipflow-rpm-build -f .github/packaging/Dockerfile.rpm .github/packaging
+          docker run --rm -e RPM_SIGNING_KEY -v "$GITHUB_WORKSPACE:/workspace" clipflow-rpm-build
 
-      # The dnf repository that installed RPMs subscribe to (crosspaste.repo
-      # points at https://oss.crosspaste.com/site/rpm/). It is generated into
+      # The dnf repository that installed RPMs subscribe to (clipflow.repo
+      # points at https://oss.clipflow.com/site/rpm/). It is generated into
       # the update-site snapshot so the staging step below ships it with the
       # rest of the site: the RPMs under packages/rpm/, repodata/ and the
       # public key under meta/rpm/. Only the current release is listed.
       - name: Build dnf repository
         run: |
-          docker run --rm -e RPM_SIGNING_KEY -v "$GITHUB_WORKSPACE:/workspace" crosspaste-rpm-build \
+          docker run --rm -e RPM_SIGNING_KEY -v "$GITHUB_WORKSPACE:/workspace" clipflow-rpm-build \
             .github/scripts/package_rpm_repo.sh output update-site/rpm
           # The container runs as root; hand the repository back to the
           # runner user so the staging step can split it into packages/meta.
@@ -419,7 +419,7 @@ jobs:
       - name: Package Chrome extension zip
         run: |
           cd web/dist
-          zip -r "${{ github.workspace }}/output/crosspaste-chrome-extension-${{ env.VERSION }}.${{ env.REVISION }}.zip" .
+          zip -r "${{ github.workspace }}/output/clipflow-chrome-extension-${{ env.VERSION }}.${{ env.REVISION }}.zip" .
 
       # Multi-arch Linux builds emit the apt repository as an output/debian/
       # directory tree instead of flat files at the site root. Surface the
@@ -454,7 +454,7 @@ jobs:
         id: upload_release_app
         run: |
           echo "Uploading release app to OSS..."
-          ossutil cp -r output/ oss://crosspaste-desktop/${{ env.VERSION }}.${{ env.REVISION }}/
+          ossutil cp -r output/ oss://clipflow-desktop/${{ env.VERSION }}.${{ env.REVISION }}/
 
       # Stage the Conveyor site to a version-named staging prefix (#4629). The
       # build never touches the live site/ prefix that clients poll for
@@ -469,9 +469,9 @@ jobs:
       - name: Stage update site to OSS staging
         run: |
           mkdir update-site-meta
-          for f in metadata.properties appcast-*.rss crosspaste.appinstaller \
+          for f in metadata.properties appcast-*.rss clipflow.appinstaller \
                    InRelease Release Packages Packages.xz install.ps1 \
-                   download.html icon.svg crosspaste.exe crosspaste.crt; do
+                   download.html icon.svg clipflow.exe clipflow.crt; do
             if compgen -G "update-site/$f" > /dev/null; then
               mv update-site/$f update-site-meta/
             fi
@@ -492,13 +492,13 @@ jobs:
           # Drop any marker left by a previous run of this version first, so a
           # re-run never exposes a "complete" flag over a half-re-uploaded
           # staging prefix (|| true: the marker usually doesn't exist yet).
-          ossutil rm -f oss://crosspaste-desktop/site-staging/${{ env.VERSION }}.${{ env.REVISION }}/staging-complete || true
-          ossutil cp -r -f --meta "Cache-Control:public, max-age=2592000" update-site/ oss://crosspaste-desktop/site-staging/${{ env.VERSION }}.${{ env.REVISION }}/packages/
-          ossutil cp -r -f --meta "Cache-Control:public, max-age=300" update-site-meta/ oss://crosspaste-desktop/site-staging/${{ env.VERSION }}.${{ env.REVISION }}/meta/
+          ossutil rm -f oss://clipflow-desktop/site-staging/${{ env.VERSION }}.${{ env.REVISION }}/staging-complete || true
+          ossutil cp -r -f --meta "Cache-Control:public, max-age=2592000" update-site/ oss://clipflow-desktop/site-staging/${{ env.VERSION }}.${{ env.REVISION }}/packages/
+          ossutil cp -r -f --meta "Cache-Control:public, max-age=300" update-site-meta/ oss://clipflow-desktop/site-staging/${{ env.VERSION }}.${{ env.REVISION }}/meta/
           # Written last: publish-release.yml refuses to publish a staging
           # prefix that lacks this marker (i.e. an unfinished upload).
           echo "${{ env.VERSION }}.${{ env.REVISION }}" > staging-complete
-          ossutil cp -f staging-complete oss://crosspaste-desktop/site-staging/${{ env.VERSION }}.${{ env.REVISION }}/staging-complete
+          ossutil cp -f staging-complete oss://clipflow-desktop/site-staging/${{ env.VERSION }}.${{ env.REVISION }}/staging-complete
 
       # conveyor default cache directory is .conveyor/cache
       # Avoid caching it, causing Github space payment

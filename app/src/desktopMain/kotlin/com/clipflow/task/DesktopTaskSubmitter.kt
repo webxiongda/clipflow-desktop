@@ -1,0 +1,157 @@
+package com.clipflow.task
+
+import com.clipflow.app.AppControl
+import com.clipflow.config.DesktopConfigManager
+import com.clipflow.db.task.DelayedDeleteExtraInfo
+import com.clipflow.db.task.PullExtraInfo
+import com.clipflow.db.task.SyncExtraInfo
+import com.clipflow.db.task.TaskDao
+import com.clipflow.db.task.TaskType
+import com.clipflow.paste.PasteType
+import com.clipflow.utils.DateUtils.nowEpochMilliseconds
+
+class DesktopTaskSubmitter(
+    private val appControl: AppControl,
+    private val configManager: DesktopConfigManager,
+    private val taskDao: TaskDao,
+    private val lazyTaskExecutor: Lazy<TaskExecutor>,
+) : TaskSubmitter {
+
+    private val taskExecutor by lazy { lazyTaskExecutor.value }
+
+    override suspend fun submit(block: suspend TaskBuilder.() -> Unit) {
+        val builder = DesktopTaskBuilder(appControl, configManager, taskDao)
+        builder.block()
+        val tasks = builder.getTasks()
+        if (tasks.isNotEmpty()) {
+            taskExecutor.submitTasks(tasks)
+        }
+    }
+}
+
+class DesktopTaskBuilder(
+    private val appControl: AppControl,
+    private val configManager: DesktopConfigManager,
+    private val taskDao: TaskDao,
+) : TaskBuilder {
+
+    private val taskIds = mutableListOf<Long>()
+
+    override fun addDelayedDeletePasteTask(
+        id: Long,
+        delayMillis: Long,
+    ): TaskBuilder {
+        taskIds.add(
+            taskDao.createTaskBlock(
+                id,
+                TaskType.DELAYED_DELETE_PASTE_TASK,
+                DelayedDeleteExtraInfo(nowEpochMilliseconds() + delayMillis),
+            ),
+        )
+        return this
+    }
+
+    override fun addDeletePasteTasks(ids: List<Long>): TaskBuilder {
+        ids.forEach { id ->
+            taskIds.add(taskDao.createTaskBlock(id, TaskType.DELETE_PASTE_TASK))
+        }
+        return this
+    }
+
+    override fun addPullFileTask(
+        id: Long,
+        remotePasteDataId: Long,
+    ): TaskBuilder = addPullFileTask(id, remotePasteDataId, emptySet())
+
+    override fun addPullFileTask(
+        id: Long,
+        remotePasteDataId: Long,
+        seenAppInstanceIds: Set<String>,
+    ): TaskBuilder = addPullFileTask(id, remotePasteDataId, seenAppInstanceIds, writePasteboard = true)
+
+    override fun addPullFileTask(
+        id: Long,
+        remotePasteDataId: Long,
+        seenAppInstanceIds: Set<String>,
+        writePasteboard: Boolean,
+    ): TaskBuilder = addPullFileTask(id, remotePasteDataId, seenAppInstanceIds, writePasteboard, historyPull = false)
+
+    override fun addPullFileTask(
+        id: Long,
+        remotePasteDataId: Long,
+        seenAppInstanceIds: Set<String>,
+        writePasteboard: Boolean,
+        historyPull: Boolean,
+    ): TaskBuilder {
+        taskIds.add(
+            taskDao.createTaskBlock(
+                id,
+                TaskType.PULL_FILE_TASK,
+                PullExtraInfo(remotePasteDataId, seenAppInstanceIds, writePasteboard, historyPull),
+            ),
+        )
+        return this
+    }
+
+    override fun addSyncTask(
+        id: Long,
+        fileSize: Long,
+        appInstanceId: String,
+        targetAppInstanceIds: Set<String>?,
+    ): TaskBuilder {
+        if (appControl.isFileSizeSyncEnabled(fileSize)) {
+            taskIds.add(
+                taskDao.createTaskBlock(
+                    id,
+                    TaskType.SYNC_PASTE_TASK,
+                    SyncExtraInfo(appInstanceId, targetAppInstanceIds),
+                ),
+            )
+        }
+        return this
+    }
+
+    override fun addRelaySyncTask(
+        id: Long,
+        appInstanceId: String,
+    ): TaskBuilder = addRelaySyncTask(id, appInstanceId, emptySet())
+
+    override fun addRelaySyncTask(
+        id: Long,
+        appInstanceId: String,
+        seenAppInstanceIds: Set<String>,
+    ): TaskBuilder {
+        if (configManager.getCurrentConfig().enableClipboardRelay) {
+            taskIds.add(
+                taskDao.createTaskBlock(
+                    id,
+                    TaskType.SYNC_PASTE_TASK,
+                    SyncExtraInfo(appInstanceId, seenAppInstanceIds = seenAppInstanceIds),
+                ),
+            )
+        }
+        return this
+    }
+
+    override fun addPullIconTask(
+        id: Long,
+        existIconFile: Boolean,
+    ): TaskBuilder {
+        if (!existIconFile) {
+            taskIds.add(taskDao.createTaskBlock(id, TaskType.PULL_ICON_TASK))
+        }
+        return this
+    }
+
+    override fun addRenderingTask(
+        id: Long,
+        pasteType: PasteType,
+    ): TaskBuilder {
+        if (pasteType.isUrl() && configManager.getCurrentConfig().enableUrlPreview) {
+            taskIds.add(taskDao.createTaskBlock(id, TaskType.OPEN_GRAPH_TASK))
+        }
+        return this
+    }
+
+    fun getTasks(): List<Long> = taskIds
+}

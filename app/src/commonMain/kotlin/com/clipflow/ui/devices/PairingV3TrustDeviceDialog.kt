@@ -1,0 +1,623 @@
+package com.clipflow.ui.devices
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.window.DialogProperties
+import com.clipflow.i18n.GlobalCopywriter
+import com.clipflow.pairing.v3.PairingSessionState
+import com.clipflow.pairing.v3.PairingSessionUiState
+import com.clipflow.pairing.v3.PakeRole
+import com.clipflow.sync.SyncManager
+import com.clipflow.sync.V3Pin
+import com.clipflow.ui.LocalAppSizeValueState
+import com.clipflow.ui.base.DialogActionButton
+import com.clipflow.ui.base.DialogButtonType
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.tiny
+import com.clipflow.ui.theme.AppUISize.xLarge
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Key
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import org.koin.compose.koinInject
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+
+const val PAIRING_PIN_LENGTH = 6
+private val INCORRECT_PIN_FEEDBACK_DURATION = 1.seconds
+
+@Composable
+fun DeviceScope.PairingV3TrustDeviceDialog() {
+    val controller = koinInject<PairingV3UiController>()
+    val copywriter = koinInject<GlobalCopywriter>()
+    val syncManager = koinInject<SyncManager>()
+    val coroutineScope = rememberCoroutineScope()
+    val appInstanceId = syncRuntimeInfo.appInstanceId
+    val sessions by controller.sessions.collectAsState()
+    val session = sessions.latestInitiatorSession(appInstanceId)
+    val dialogState =
+        remember(appInstanceId, controller, syncManager, coroutineScope) {
+            PairingV3DialogState(
+                appInstanceId = appInstanceId,
+                controller = controller,
+                syncManager = syncManager,
+                coroutineScope = coroutineScope,
+            )
+        }
+    val tokens =
+        remember(appInstanceId, session?.sessionId, session?.tokenGeneration) {
+            mutableStateListOf(*Array(PAIRING_PIN_LENGTH) { "" })
+        }
+    val focusRequesters =
+        remember(appInstanceId, session?.sessionId, session?.tokenGeneration) {
+            List(PAIRING_PIN_LENGTH) { FocusRequester() }
+        }
+
+    val dialogUi by dialogState.uiState.collectAsState()
+
+    PairingV3DialogLifecycle(
+        appInstanceId = appInstanceId,
+        session = session,
+        controller = controller,
+        dialogState = dialogState,
+        inputResetGeneration = dialogUi.inputResetGeneration,
+        resetInput = {
+            tokens.indices.forEach { index -> tokens[index] = "" }
+        },
+    )
+
+    PairingV3TrustDeviceDialogContent(
+        copywriter = copywriter,
+        model =
+            PairingV3DialogModel(
+                deviceDisplayName = syncRuntimeInfo.getDeviceDisplayName(),
+                peerKeyFingerprint = session?.peerKeyFingerprintDisplay,
+                sessionState = session?.state,
+                isLoading = dialogUi.isLoading,
+                uiError = dialogUi.uiError,
+                recovery = dialogUi.recovery,
+                pinComplete = tokens.all { it.length == 1 },
+            ),
+        tokens = tokens,
+        focusRequesters = focusRequesters,
+        dialogWidth = LocalAppSizeValueState.current.dialogWidth,
+        onSubmit = {
+            session?.let {
+                dialogState.submitPin(it.sessionId, tokens.joinToString(""))
+            }
+        },
+        onRetry = {
+            dialogState.retry(session?.sessionId)
+        },
+        onCancel = {
+            dialogState.cancel(session)
+        },
+    )
+}
+
+@Composable
+private fun PairingV3DialogLifecycle(
+    appInstanceId: String,
+    session: PairingSessionUiState?,
+    controller: PairingV3UiController,
+    dialogState: PairingV3DialogState,
+    inputResetGeneration: Int,
+    resetInput: () -> Unit,
+) {
+    LaunchedEffect(appInstanceId) {
+        if (session == null || session.state.isTerminal) {
+            dialogState.startPairing()
+        }
+    }
+
+    LaunchedEffect(session?.sessionId, session?.tokenGeneration) {
+        resetInput()
+        dialogState.resetFeedback()
+    }
+
+    LaunchedEffect(inputResetGeneration) {
+        if (inputResetGeneration > 0) {
+            resetInput()
+        }
+    }
+
+    DisposableEffect(appInstanceId) {
+        onDispose {
+            controller.sessions.value
+                .latestActiveInitiatorSession(appInstanceId)
+                ?.let { controller.cancelDetached(it.sessionId) }
+        }
+    }
+}
+
+@Composable
+private fun DeviceScope.PairingV3TrustDeviceDialogContent(
+    copywriter: GlobalCopywriter,
+    model: PairingV3DialogModel,
+    tokens: MutableList<String>,
+    focusRequesters: List<FocusRequester>,
+    dialogWidth: Dp,
+    onSubmit: () -> Unit,
+    onRetry: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    AlertDialog(
+        modifier = Modifier.width(dialogWidth),
+        properties =
+            DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = !model.isLoading,
+                dismissOnClickOutside = !model.isLoading,
+            ),
+        onDismissRequest = onCancel,
+        title = {
+            PairingV3DialogTitle(copywriter)
+        },
+        text = {
+            PairingV3DialogBody(
+                copywriter = copywriter,
+                model = model,
+                tokens = tokens,
+                focusRequesters = focusRequesters,
+                onSubmit = onSubmit,
+                onCancel = onCancel,
+            )
+        },
+        confirmButton = {
+            PairingV3ConfirmAction(
+                copywriter = copywriter,
+                model = model,
+                onSubmit = onSubmit,
+                onRetry = onRetry,
+            )
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onCancel,
+                enabled = !model.isLoading,
+            ) {
+                Text(copywriter.getText(if (model.isTerminal) "pairing_v3_dismiss" else "cancel"))
+            }
+        },
+    )
+}
+
+@Composable
+private fun PairingV3DialogTitle(copywriter: GlobalCopywriter) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(top = tiny),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = MaterialSymbols.Rounded.Key,
+            contentDescription = null,
+            modifier = Modifier.size(xLarge),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(modifier = Modifier.width(medium))
+        Text(
+            text = copywriter.getText("pairing_v3_enter_pin_title"),
+            style = MaterialTheme.typography.headlineSmall,
+        )
+    }
+}
+
+@Composable
+private fun DeviceScope.PairingV3DialogBody(
+    copywriter: GlobalCopywriter,
+    model: PairingV3DialogModel,
+    tokens: MutableList<String>,
+    focusRequesters: List<FocusRequester>,
+    onSubmit: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = tiny),
+        verticalArrangement = Arrangement.spacedBy(xLarge),
+    ) {
+        Text(
+            text =
+                copywriter.getText(
+                    "pairing_v3_enter_pin_desc",
+                    model.deviceDisplayName,
+                ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        PairingV3PeerIdentity(model.peerKeyFingerprint)
+        PairingV3PinInput(
+            model = model,
+            tokens = tokens,
+            focusRequesters = focusRequesters,
+            onSubmit = onSubmit,
+            onCancel = onCancel,
+        )
+        PairingV3Feedback(copywriter, model)
+    }
+}
+
+@Composable
+private fun DeviceScope.PairingV3PeerIdentity(peerKeyFingerprint: String?) {
+    DeviceRowContent(
+        style = tokenDeviceStyle,
+        trailingContent = {
+            peerKeyFingerprint?.let {
+                Text(
+                    text = it,
+                    style =
+                        MaterialTheme.typography.labelMedium.copy(
+                            fontFamily = FontFamily.Monospace,
+                        ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    )
+}
+
+@Composable
+private fun PairingV3PinInput(
+    model: PairingV3DialogModel,
+    tokens: MutableList<String>,
+    focusRequesters: List<FocusRequester>,
+    onSubmit: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    if (model.isTerminal) return
+
+    TokenInputRow(
+        tokens = tokens,
+        isError = model.uiError != null,
+        isLoading = model.inputLocked,
+        focusRequesters = focusRequesters,
+        confirmAction = {
+            if (model.canSubmit) onSubmit()
+        },
+        cancelAction = onCancel,
+    )
+}
+
+@Composable
+private fun PairingV3Feedback(
+    copywriter: GlobalCopywriter,
+    model: PairingV3DialogModel,
+) {
+    model.uiError?.let { error ->
+        Text(
+            text = copywriter.getText(error.copyKey()),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+    model.sessionState
+        ?.takeIf { it.isTerminal }
+        ?.let { state ->
+            Text(
+                text = copywriter.getText(state.copyKey()),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+}
+
+@Composable
+private fun PairingV3ConfirmAction(
+    copywriter: GlobalCopywriter,
+    model: PairingV3DialogModel,
+    onSubmit: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    if (model.canRetry) {
+        DialogActionButton(
+            text = copywriter.getText("retry"),
+            type = DialogButtonType.FILLED,
+            enabled = !model.isLoading,
+            isLoading = model.isLoading,
+            onClick = onRetry,
+        )
+    } else if (model.showConfirm) {
+        DialogActionButton(
+            text = copywriter.getText("confirm"),
+            type = DialogButtonType.FILLED,
+            enabled = model.canSubmit,
+            isLoading = model.isLoading,
+            onClick = onSubmit,
+        )
+    }
+}
+
+data class PairingV3DialogModel(
+    val deviceDisplayName: String,
+    val peerKeyFingerprint: String?,
+    val sessionState: PairingSessionState?,
+    val isLoading: Boolean,
+    val uiError: PairingV3UiError?,
+    val recovery: PairingV3Recovery,
+    val pinComplete: Boolean,
+) {
+    val hasSession: Boolean
+        get() = sessionState != null
+
+    val isTerminal: Boolean
+        get() = sessionState?.isTerminal == true
+
+    val canRetry: Boolean
+        get() =
+            recovery != PairingV3Recovery.NONE &&
+                (recovery == PairingV3Recovery.RETRY_START || hasSession)
+
+    val showConfirm: Boolean
+        get() = !isTerminal && uiError == null
+
+    val canSubmit: Boolean
+        get() =
+            hasSession &&
+                !isTerminal &&
+                uiError == null &&
+                recovery == PairingV3Recovery.NONE &&
+                pinComplete
+
+    val inputLocked: Boolean
+        get() =
+            isLoading ||
+                !hasSession ||
+                uiError != null ||
+                recovery != PairingV3Recovery.NONE
+}
+
+/** What the v3 PIN dialog shows besides the session itself. */
+data class PairingV3DialogUiState(
+    val isLoading: Boolean = false,
+    val uiError: PairingV3UiError? = null,
+    val recovery: PairingV3Recovery = PairingV3Recovery.NONE,
+    /** Bumped when the PIN input must be cleared (a refreshed offer after an incorrect PIN). */
+    val inputResetGeneration: Int = 0,
+)
+
+/**
+ * The v3 PIN dialog's actions and feedback, independent of the UI toolkit: the
+ * Compose dialog collects [uiState], and so can a native one.
+ */
+class PairingV3DialogState(
+    private val appInstanceId: String,
+    private val controller: PairingV3UiController,
+    private val syncManager: SyncManager,
+    private val coroutineScope: CoroutineScope,
+    private val incorrectPinFeedbackDuration: Duration = INCORRECT_PIN_FEEDBACK_DURATION,
+) {
+    private val _uiState = MutableStateFlow(PairingV3DialogUiState())
+
+    val uiState: StateFlow<PairingV3DialogUiState> = _uiState
+
+    /** Snapshot of [uiState.value.isLoading]. In Compose, collect [uiState] instead to observe changes. */
+    val isLoading: Boolean
+        get() = _uiState.value.isLoading
+
+    /** Snapshot of [uiState.value.uiError]. In Compose, collect [uiState] instead to observe changes. */
+    val uiError: PairingV3UiError?
+        get() = _uiState.value.uiError
+
+    /** Snapshot of [uiState.value.recovery]. In Compose, collect [uiState] instead to observe changes. */
+    val recovery: PairingV3Recovery
+        get() = _uiState.value.recovery
+
+    /** Snapshot of [uiState.value.inputResetGeneration]. In Compose, collect [uiState] instead to observe changes. */
+    val inputResetGeneration: Int
+        get() = _uiState.value.inputResetGeneration
+
+    fun resetFeedback() {
+        _uiState.update { it.copy(uiError = null, recovery = PairingV3Recovery.NONE) }
+    }
+
+    fun startPairing() {
+        launchAction {
+            controller.startPairing(appInstanceId)
+        }
+    }
+
+    fun submitPin(
+        sessionId: String,
+        pin: String,
+    ) {
+        launchAction(autoRefreshIncorrectPinSessionId = sessionId) {
+            controller.submitPin(sessionId, V3Pin(pin))
+        }
+    }
+
+    fun retry(sessionId: String?) {
+        when (recovery) {
+            PairingV3Recovery.RETRY_START -> startPairing()
+            PairingV3Recovery.REFRESH_OFFER,
+            PairingV3Recovery.RETRY_COMMIT,
+            -> sessionId?.let { launchAction { controller.recover(it) } }
+
+            PairingV3Recovery.RESTART -> sessionId?.let { launchAction { controller.restart(it, appInstanceId) } }
+            PairingV3Recovery.NONE -> Unit
+        }
+    }
+
+    fun cancel(session: PairingSessionUiState?) {
+        if (isLoading) return
+        coroutineScope.launch {
+            session?.let {
+                if (it.state.isTerminal) {
+                    controller.dismiss(it.sessionId)
+                } else {
+                    controller.cancel(it.sessionId)
+                }
+            }
+            syncManager.ignoreVerify(appInstanceId)
+        }
+    }
+
+    private fun launchAction(
+        autoRefreshIncorrectPinSessionId: String? = null,
+        action: suspend () -> PairingV3UiResult,
+    ) {
+        val previous =
+            _uiState.getAndUpdate { current ->
+                if (current.isLoading) current else current.copy(isLoading = true, uiError = null)
+            }
+        if (previous.isLoading) return
+
+        coroutineScope.launch {
+            runAction(
+                action = action,
+                autoRefreshIncorrectPinSessionId = autoRefreshIncorrectPinSessionId,
+            )
+        }
+    }
+
+    private suspend fun runAction(
+        action: suspend () -> PairingV3UiResult,
+        autoRefreshIncorrectPinSessionId: String?,
+    ) {
+        val result = executeAction(action)
+        if (
+            autoRefreshIncorrectPinSessionId != null &&
+            result is PairingV3UiResult.Error &&
+            result.reason == PairingV3UiError.INCORRECT_PIN &&
+            result.recovery == PairingV3Recovery.REFRESH_OFFER
+        ) {
+            autoRefreshAfterIncorrectPin(autoRefreshIncorrectPinSessionId)
+        } else {
+            applyResult(result)
+        }
+    }
+
+    private suspend fun executeAction(action: suspend () -> PairingV3UiResult): PairingV3UiResult =
+        try {
+            action()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            PairingV3UiResult.Error(PairingV3UiError.FAILED)
+        }
+
+    private suspend fun autoRefreshAfterIncorrectPin(sessionId: String) {
+        _uiState.update { it.copy(uiError = PairingV3UiError.INCORRECT_PIN, recovery = PairingV3Recovery.NONE) }
+
+        delay(incorrectPinFeedbackDuration)
+
+        _uiState.update { it.copy(uiError = null) }
+        val result = executeAction { controller.recover(sessionId) }
+        applyResult(result, inputResetGenerationIncrement = 1)
+    }
+
+    private fun applyResult(
+        result: PairingV3UiResult,
+        inputResetGenerationIncrement: Int = 0,
+    ) {
+        _uiState.update { current ->
+            val nextGeneration = current.inputResetGeneration + inputResetGenerationIncrement
+            when (result) {
+                is PairingV3UiResult.SessionReady,
+                PairingV3UiResult.Paired,
+                ->
+                    current.copy(
+                        isLoading = false,
+                        uiError = null,
+                        recovery = PairingV3Recovery.NONE,
+                        inputResetGeneration = nextGeneration,
+                    )
+
+                is PairingV3UiResult.Error ->
+                    current.copy(
+                        isLoading = false,
+                        uiError = result.reason,
+                        recovery = result.recovery,
+                        inputResetGeneration = nextGeneration,
+                    )
+            }
+        }
+        if (result is PairingV3UiResult.Paired) {
+            completePairing()
+        }
+    }
+
+    private fun completePairing() {
+        syncManager.ignoreVerify(appInstanceId)
+        syncManager.refresh(listOf(appInstanceId))
+    }
+}
+
+fun List<PairingSessionUiState>.latestInitiatorSession(appInstanceId: String): PairingSessionUiState? =
+    filter { it.role == PakeRole.INITIATOR && it.peerAppInstanceId == appInstanceId }
+        .maxByOrNull { it.createdAt }
+
+fun List<PairingSessionUiState>.latestActiveInitiatorSession(appInstanceId: String): PairingSessionUiState? =
+    filter {
+        it.role == PakeRole.INITIATOR &&
+            it.peerAppInstanceId == appInstanceId &&
+            !it.state.isTerminal
+    }.maxByOrNull { it.createdAt }
+
+fun PairingV3UiError.copyKey(): String =
+    when (this) {
+        PairingV3UiError.PIN_EXPIRED -> "pairing_v3_pin_expired"
+        PairingV3UiError.INCORRECT_PIN -> "pairing_v3_incorrect_pin"
+        PairingV3UiError.NETWORK_FAILURE -> "pairing_v3_network_failure"
+        PairingV3UiError.NOT_ACCEPTING -> "pairing_v3_not_accepting"
+        PairingV3UiError.REJECTED -> "pairing_v3_rejected"
+        PairingV3UiError.CANCELLED -> "pairing_v3_cancelled"
+        PairingV3UiError.SESSION_EXPIRED -> "pairing_v3_session_expired"
+        PairingV3UiError.RATE_LIMITED -> "pairing_v3_rate_limited"
+        PairingV3UiError.CAPACITY_EXCEEDED -> "pairing_v3_capacity_exceeded"
+        PairingV3UiError.UNSUPPORTED -> "pairing_v3_unsupported"
+        PairingV3UiError.IDENTITY_INVALID -> "pairing_v3_identity_invalid"
+        PairingV3UiError.FAILED -> "pairing_v3_failed"
+    }
+
+fun PairingSessionState.copyKey(): String =
+    when (this) {
+        PairingSessionState.INTENT_RECEIVED,
+        PairingSessionState.PIN_AVAILABLE,
+        -> "pairing_v3_waiting"
+
+        PairingSessionState.PAKE_NEGOTIATING -> "pairing_v3_negotiating"
+        PairingSessionState.PEER_CONFIRMED,
+        PairingSessionState.COMMITTING,
+        -> "pairing_v3_confirming"
+
+        PairingSessionState.TRUSTED -> "pairing_v3_trusted"
+        PairingSessionState.REJECTED -> "pairing_v3_rejected"
+        PairingSessionState.CANCELLED -> "pairing_v3_cancelled"
+        PairingSessionState.EXPIRED -> "pairing_v3_session_expired"
+        PairingSessionState.FAILED -> "pairing_v3_failed"
+    }

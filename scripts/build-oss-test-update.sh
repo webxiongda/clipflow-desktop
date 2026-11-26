@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Build the four files needed to test the Windows portable-zip self-updater from a
-# remote OSS test bucket (https://oss.crosspaste.com/test/), with zero local server:
+# remote OSS test bucket (https://oss.clipflow.com/test/), with zero local server:
 #
-#   1. crosspaste-<OLD>-windows-amd64.zip            the "old" app you install & run
-#   2. crosspaste-<NEW>-<REV>-windows-amd64.zip      the "new" build the updater pulls
+#   1. clipflow-<OLD>-windows-amd64.zip            the "old" app you install & run
+#   2. clipflow-<NEW>-<REV>-windows-amd64.zip      the "new" build the updater pulls
 #   3. checksum.txt                                  sha256 of (2), in shasum format
 #   4. metadata.properties                           advertises <NEW> / <REV>
 #
 # Upload all four to the OSS test bucket, then on the Windows machine:
-#   set CROSSPASTE_UPDATE_BASE_URL=https://oss.crosspaste.com/test
-#   "<extracted-old-zip>\bin\CrossPaste.exe"
+#   set CLIPFLOW_UPDATE_BASE_URL=https://oss.clipflow.com/test
+#   "<extracted-old-zip>\bin\ClipFlow.exe"
 # The BETA build honors the remote override (only PRODUCTION is loopback-only), so the
 # full download -> verify -> replace -> restart flow runs straight off OSS.
 #
@@ -34,10 +34,10 @@ NEW_VER="${1:-2.1.5}"
 REV="${2:-1}"
 OUT_DIR="${3:-output-oss-test}"
 # Base URL baked into the OLD build so the packaged app reads it from a JVM system
-# property at launch — no `set CROSSPASTE_UPDATE_BASE_URL=...` needed on the test box.
-BASE_URL="${4:-https://oss.crosspaste.com/test}"
+# property at launch — no `set CLIPFLOW_UPDATE_BASE_URL=...` needed on the test box.
+BASE_URL="${4:-https://oss.clipflow.com/test}"
 
-VERSION_FILE="app/src/desktopMain/resources/crosspaste-version.properties"
+VERSION_FILE="app/src/desktopMain/resources/clipflow-version.properties"
 OLD_VER="$(sed -n 's/^version=//p' "$VERSION_FILE" | head -1)"
 [ -n "$OLD_VER" ] || { echo "ERROR: could not read version from $VERSION_FILE" >&2; exit 1; }
 
@@ -56,7 +56,7 @@ fi
 # Build a single BETA windows-zip at whatever version.properties currently says,
 # mirroring the CI conveyor prep. Echoes the path of the produced zip.
 #   build_zip <stage> [bakeUrl]
-# When [bakeUrl] is non-empty, "-Dcrosspaste.update.base.url=<bakeUrl>" is added to
+# When [bakeUrl] is non-empty, "-Dclipflow.update.base.url=<bakeUrl>" is added to
 # app.jvm.options so the packaged app reads the override from System.getProperty without
 # needing an env var set at launch (a Conveyor-launched app doesn't reliably inherit it).
 build_zip() {
@@ -79,8 +79,8 @@ build_zip() {
     node ./.github/scripts/checkDuplicateJars.js generated.conveyor.conf >&2
 
     if [ -n "$bake_url" ]; then
-        echo "==> [$stage] baking -Dcrosspaste.update.base.url=$bake_url into app.jvm.options" >&2
-        printf '\napp.jvm.options += "-Dcrosspaste.update.base.url=%s"\n' "$bake_url" >> generated.conveyor.conf
+        echo "==> [$stage] baking -Dclipflow.update.base.url=$bake_url into app.jvm.options" >&2
+        printf '\napp.jvm.options += "-Dclipflow.update.base.url=%s"\n' "$bake_url" >> generated.conveyor.conf
     fi
 
     local tmp="$OUT_DIR/.build-$stage"
@@ -136,7 +136,7 @@ mkdir -p "$OUT_DIR"
 printf 'version=%s' "$OLD_VER" > "$VERSION_FILE"
 OLD_BUILT="$(build_zip old "$BASE_URL")"
 [ -f "$OLD_BUILT" ] || { echo "ERROR: old zip not produced" >&2; exit 1; }
-OLD_NAME="crosspaste-$OLD_VER-windows-amd64.zip"
+OLD_NAME="clipflow-$OLD_VER-windows-amd64.zip"
 cp "$OLD_BUILT" "$OUT_DIR/$OLD_NAME"
 
 # 2. New app (bumped version) — the build the updater downloads; reports <NEW>-beta.
@@ -144,7 +144,7 @@ printf 'version=%s' "$NEW_VER" > "$VERSION_FILE"
 inject_changelog_header
 NEW_BUILT="$(build_zip new)"
 [ -f "$NEW_BUILT" ] || { echo "ERROR: new zip not produced" >&2; exit 1; }
-NEW_NAME="crosspaste-$NEW_VER-$REV-windows-amd64.zip"
+NEW_NAME="clipflow-$NEW_VER-$REV-windows-amd64.zip"
 cp "$NEW_BUILT" "$OUT_DIR/$NEW_NAME"
 
 restore_state
@@ -157,7 +157,7 @@ printf '%s  %s\n' "$HASH" "$NEW_NAME" > "$OUT_DIR/checksum.txt"
 printf 'app.version=%s\napp.revision=%s\n' "$NEW_VER" "$REV" > "$OUT_DIR/metadata.properties"
 
 echo
-echo "Done. Upload these four files to the OSS test bucket (https://oss.crosspaste.com/test/):"
+echo "Done. Upload these four files to the OSS test bucket (https://oss.clipflow.com/test/):"
 echo "  $OUT_DIR/$OLD_NAME              <- install & run this one"
 echo "  $OUT_DIR/$NEW_NAME"
 echo "  $OUT_DIR/checksum.txt"
@@ -168,4 +168,4 @@ echo "  sha256 ($NEW_NAME) = $HASH"
 echo "  update base baked into $OLD_NAME = $BASE_URL"
 echo
 echo "On the Windows test box — just extract & run, no env var needed:"
-printf '%s\n' "  \"<extracted $OLD_NAME>\\bin\\CrossPaste.exe\""
+printf '%s\n' "  \"<extracted $OLD_NAME>\\bin\\ClipFlow.exe\""

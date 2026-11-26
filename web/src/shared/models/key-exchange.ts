@@ -1,6 +1,6 @@
 /**
  * Wire shapes of the v2 SAS trust routes (`/sync/trust/v2/*`).
- * Mirror of desktop `com.crosspaste.dto.secure.*` — ByteArray fields travel as
+ * Mirror of desktop `com.clipflow.dto.secure.*` — ByteArray fields travel as
  * standard base64 strings (RFC 4648, padded).
  */
 

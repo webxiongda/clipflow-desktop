@@ -1,0 +1,32 @@
+package com.clipflow.sync
+
+import com.clipflow.dto.sync.SyncInfo
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.StateFlow
+
+interface NearbyDeviceManager {
+
+    val nearbyDeviceScope: CoroutineScope
+
+    val nearbySyncInfos: StateFlow<List<SyncInfo>>
+
+    val searching: StateFlow<Boolean>
+
+    fun addDevice(syncInfo: SyncInfo)
+
+    fun removeDevice(appInstanceId: String)
+
+    /** Hides the device from nearby results until [unblockDevice] is called. */
+    fun blockDevice(syncInfo: SyncInfo)
+
+    /**
+     * Unblocks the device identified by [appInstanceId].
+     *
+     * @return `true` if the device was in the blacklist and removed, `false` otherwise.
+     */
+    fun unblockDevice(appInstanceId: String): Boolean
+
+    fun startSearching()
+
+    fun stopSearching()
+}

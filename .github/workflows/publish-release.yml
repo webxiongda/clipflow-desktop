@@ -71,8 +71,8 @@ jobs:
       # and the staged metadata must identify exactly the requested version.
       - name: Verify staged site matches version
         run: |
-          ossutil stat oss://crosspaste-desktop/site-staging/${{ env.VERSION_FULL }}/staging-complete
-          ossutil cp -f oss://crosspaste-desktop/site-staging/${{ env.VERSION_FULL }}/meta/metadata.properties staged-metadata.properties
+          ossutil stat oss://clipflow-desktop/site-staging/${{ env.VERSION_FULL }}/staging-complete
+          ossutil cp -f oss://clipflow-desktop/site-staging/${{ env.VERSION_FULL }}/meta/metadata.properties staged-metadata.properties
           grep -q "^app.version=${{ env.VERSION }}$" staged-metadata.properties
           grep -q "^app.revision=${{ env.REVISION }}$" staged-metadata.properties
           echo "Staged site identifies as ${{ env.VERSION }}.${{ env.REVISION }}."
@@ -82,19 +82,19 @@ jobs:
       # re-stamped per group (packages are version-named and immutable,
       # metadata must revalidate quickly through the CDN).
       - name: Publish packages
-        run: ossutil cp -r -f --meta "Cache-Control:public, max-age=2592000" oss://crosspaste-desktop/site-staging/${{ env.VERSION_FULL }}/packages/ oss://crosspaste-desktop/site/
+        run: ossutil cp -r -f --meta "Cache-Control:public, max-age=2592000" oss://clipflow-desktop/site-staging/${{ env.VERSION_FULL }}/packages/ oss://clipflow-desktop/site/
 
       - name: Publish update metadata
-        run: ossutil cp -r -f --meta "Cache-Control:public, max-age=300" oss://crosspaste-desktop/site-staging/${{ env.VERSION_FULL }}/meta/ oss://crosspaste-desktop/site/
+        run: ossutil cp -r -f --meta "Cache-Control:public, max-age=300" oss://clipflow-desktop/site-staging/${{ env.VERSION_FULL }}/meta/ oss://clipflow-desktop/site/
 
       - name: Verify published site
         run: |
-          ossutil cp -f oss://crosspaste-desktop/site/metadata.properties published-metadata.properties
+          ossutil cp -f oss://clipflow-desktop/site/metadata.properties published-metadata.properties
           grep -q "^app.version=${{ env.VERSION }}$" published-metadata.properties
           grep -q "^app.revision=${{ env.REVISION }}$" published-metadata.properties
           echo "site/ now serves ${{ env.VERSION }}.${{ env.REVISION }} (CDN edge caches converge within max-age=300)."
 
-      # oss.crosspaste.com is served through Alibaba Cloud DCDN. Edges honor
+      # oss.clipflow.com is served through Alibaba Cloud DCDN. Edges honor
       # the origin Cache-Control, so they converge on their own within
       # max-age=300; the directory refresh just makes the flip immediate.
       # Best effort: a failed refresh must not mark a completed publish as
@@ -111,4 +111,4 @@ jobs:
             --access-key-id "$ALIYUN_ACCESS_KEY_ID" \
             --access-key-secret "$ALIYUN_ACCESS_KEY_SECRET" \
             --ObjectType Directory \
-            --ObjectPath "https://oss.crosspaste.com/site/"
+            --ObjectPath "https://oss.clipflow.com/site/"

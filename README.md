@@ -1,39 +1,39 @@
 <div align="center">
    <img src="doc/en/marketing.webp" width="986px" height="518px" alt="poster" />
-   <h1>CrossPaste: Universal Pasteboard Across Devices</h1>
+   <h1>ClipFlow: Universal Pasteboard Across Devices</h1>
    <p>
       <b>Copy anything and paste it on any device, seamlessly</b>
       <br />
       <br />
-      <a href="https://github.com/CrossPaste/crosspaste-desktop/blob/main/README.zh-CN.md">简体中文</a>
+      <a href="https://github.com/ClipFlow/clipflow-desktop/blob/main/README.zh-CN.md">简体中文</a>
        ·
-      <a href="https://crosspaste.com/en/" target="_blank">Official Website</a>
+      <a href="https://clipflow.com/en/" target="_blank">Official Website</a>
        ·
-      <a href="https://deepwiki.com/CrossPaste/crosspaste-desktop" target="_blank">Wiki</a>
+      <a href="https://deepwiki.com/ClipFlow/clipflow-desktop" target="_blank">Wiki</a>
        ·
-      <a href="https://crosspaste.com/en/download" target="_blank">Download</a>
+      <a href="https://clipflow.com/en/download" target="_blank">Download</a>
        ·
-      <a href="https://crosspaste.com/en/video?from=github" target="_blank">Video</a>
+      <a href="https://clipflow.com/en/video?from=github" target="_blank">Video</a>
       <br />
    </p>
 
-   <a href="https://trendshift.io/repositories/15491?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-15491" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/15491" alt="CrossPaste%2Fcrosspaste-desktop | Trendshift" width="250" height="55"/></a>
-   <a href="https://trendshift.io/repositories/15491?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-15491" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/15491/weekly?language=Kotlin" alt="CrossPaste%2Fcrosspaste-desktop | Trendshift" width="250" height="55"/></a>
+   <a href="https://trendshift.io/repositories/15491?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-15491" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/15491" alt="ClipFlow%2Fclipflow-desktop | Trendshift" width="250" height="55"/></a>
+   <a href="https://trendshift.io/repositories/15491?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-15491" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/15491/weekly?language=Kotlin" alt="ClipFlow%2Fclipflow-desktop | Trendshift" width="250" height="55"/></a>
 
-   [![Main CI Test](https://github.com/CrossPaste/crosspaste-desktop/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/CrossPaste/crosspaste-desktop/actions/workflows/ci.yml)
-   [![Build Release](https://github.com/CrossPaste/crosspaste-desktop/actions/workflows/build-release.yml/badge.svg)](https://github.com/CrossPaste/crosspaste-desktop/actions/workflows/build-release.yml)
+   [![Main CI Test](https://github.com/ClipFlow/clipflow-desktop/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ClipFlow/clipflow-desktop/actions/workflows/ci.yml)
+   [![Build Release](https://github.com/ClipFlow/clipflow-desktop/actions/workflows/build-release.yml/badge.svg)](https://github.com/ClipFlow/clipflow-desktop/actions/workflows/build-release.yml)
    ![Dependabot](https://img.shields.io/badge/Dependabot-enabled-2cbe4e.svg?logo=dependabot&logoColor=white)
    [![Compose-Multiplatform](https://img.shields.io/badge/UI-Compose%20Multiplatform-3a7af2?logo=jetpackcompose&logoColor=white)](https://github.com/JetBrains/compose-multiplatform)
    [![Sqlite](https://img.shields.io/badge/Database-Sqlite-39477F?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
    ![Kotlin](https://img.shields.io/badge/Lang-Kotlin-0095D5.svg?logo=kotlin&logoColor=white)
    ![OS](https://img.shields.io/badge/OS-Windows%20%7C%20macOS%20%7C%20Linux-2cbe4e)
-   [![Download](https://img.shields.io/badge/Download-v2.3.1-2cbe4e?logo=download&link=https://crosspaste.com/en/download)](https://crosspaste.com/en/download)
-   [![AGPL-3.0](https://img.shields.io/badge/License-AGPL%20v3-2cbe4e.svg)](https://github.com/CrossPaste/crosspaste-desktop/blob/main/LICENSE)
-   [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/crosspaste/crosspaste-desktop)
-   [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-2cbe4e)](https://deepwiki.com/CrossPaste/crosspaste-desktop)
+   [![Download](https://img.shields.io/badge/Download-v2.3.1-2cbe4e?logo=download&link=https://clipflow.com/en/download)](https://clipflow.com/en/download)
+   [![AGPL-3.0](https://img.shields.io/badge/License-AGPL%20v3-2cbe4e.svg)](https://github.com/ClipFlow/clipflow-desktop/blob/main/LICENSE)
+   [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/ClipFlow/clipflow-desktop)
+   [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-2cbe4e)](https://deepwiki.com/ClipFlow/clipflow-desktop)
 
-   <a href="https://github.com/sponsors/CrossPaste"><img src="https://img.shields.io/badge/sponsor-30363D?style=social&logo=GitHub-Sponsors&logoColor=#white" height="30px"></a>
-   <img src="https://img.shields.io/github/stars/CrossPaste/crosspaste-desktop?style=social" height="30px">
+   <a href="https://github.com/sponsors/ClipFlow"><img src="https://img.shields.io/badge/sponsor-30363D?style=social&logo=GitHub-Sponsors&logoColor=#white" height="30px"></a>
+   <img src="https://img.shields.io/github/stars/ClipFlow/clipflow-desktop?style=social" height="30px">
 </div>
 
 ## ✨ Features
@@ -45,6 +45,7 @@
 - **🌐 LAN-only Serverless**: Local storage, serverless architecture. Privacy protection, in your control.
 - **🧹 Smart Space Management**: Auto-cleanup options manage pasteboard storage without manual effort.
 - **🔍 Built-in OCR**: Extract text from images locally — no network calls, your screenshots never leave the device.
+- **📸 Screenshot Preview Bubble**: Capturing a screenshot pops a small always-on-top preview with the newest image; arrow buttons walk back through recent screenshots without opening the main panel. Low-latency capture and a larger snapshot backlog keep rapid screenshots in order. Toggle in Settings → Appearance.
 - **🤖 MCP Server**: Expose your pasteboard history to AI assistants (Claude, etc.) via the Model Context Protocol.
 - **🌍 Chrome Extension**: Sync clipboard with the browser — copy on a web page, paste on any device.
 - **⌨️ Command-Line**: Copy, paste, and search your history from the terminal and scripts. See the [CLI guide](doc/en/CLI.md).
@@ -54,13 +55,13 @@
 1. clone the repository
 
    ```bash
-   git clone https://github.com/CrossPaste/crosspaste-desktop.git
+   git clone https://github.com/ClipFlow/clipflow-desktop.git
    ```
 
 2. Compile and run the application
 
    ```bash
-   cd crosspaste-desktop
+   cd clipflow-desktop
    ./gradlew app:run
    ```
    
@@ -85,7 +86,7 @@ systemProp.https.proxyPassword=password
 systemProp.http.nonProxyHosts=*.nonproxyrepos.com|localhost
 ```
 
-Additionally, a series of technical [blogs](https://crosspaste.com/en/blog/introduction) about CrossPaste is being published (approximately one article per week). If you're interested in developing cross-platform applications, you're welcome to read them.
+Additionally, a series of technical [blogs](https://clipflow.com/en/blog/introduction) about ClipFlow is being published (approximately one article per week). If you're interested in developing cross-platform applications, you're welcome to read them.
 
 ### 🌍 Building the Chrome Extension
 
@@ -105,24 +106,24 @@ The Chrome extension lives in [`web/`](./web) and is built via Gradle. Node.js (
    - Enable **Developer mode** in the top-right corner
    - Click **Load unpacked** and select the `web/dist/` directory
 
-The extension auto-discovers a CrossPaste desktop app running on the same machine and syncs clipboard content with it. To iterate on extension code, run `npm run dev` inside `web/` for a fast Vite dev loop, then reload the extension in Chrome. The extension imports a Kotlin/JS `core` library produced by `./gradlew :core:jsBrowserProductionLibraryDistribution` (also run as part of `:web:build`) — re-run that task whenever you change `core/` sources.
+The extension auto-discovers a ClipFlow desktop app running on the same machine and syncs clipboard content with it. To iterate on extension code, run `npm run dev` inside `web/` for a fast Vite dev loop, then reload the extension in Chrome. The extension imports a Kotlin/JS `core` library produced by `./gradlew :core:jsBrowserProductionLibraryDistribution` (also run as part of `:web:build`) — re-run that task whenever you change `core/` sources.
 
 ## 🗺️ Roadmap
-CrossPaste is continuously evolving! **v2.2** brings a full command-line mode — copy, paste, and search your history straight from the terminal. Here's what we're working on next:
+ClipFlow is continuously evolving! **v2.2** brings a full command-line mode — copy, paste, and search your history straight from the terminal. Here's what we're working on next:
 
-- [ ] **Plugin system** — let the community extend CrossPaste with custom paste types and integrations
+- [ ] **Plugin system** — let the community extend ClipFlow with custom paste types and integrations
 
 This is just a small part of our plans. Want to learn more details and long-term plans? Check out our [full roadmap](doc/en/Roadmap.md).
 
 ## 🙋 FAQ
-Here are some [FAQs](doc/en/FQA.md) that have been collected. If you have other questions, please create an [issue](https://github.com/CrossPaste/crosspaste-desktop/issues/new/choose) to let us know.
+Here are some [FAQs](doc/en/FQA.md) that have been collected. If you have other questions, please create an [issue](https://github.com/ClipFlow/clipflow-desktop/issues/new/choose) to let us know.
 
 ## 🤝 Support the project
-- **🌟 Star this repository**: This is the easiest way to support CrossPaste and costs nothing.
-- **🪲 Report bugs**: Report any bugs you find on the [issue tracker](https://github.com/CrossPaste/crosspaste-desktop/issues/new/choose).
-- **📖 Translate**: Help translate and polish CrossPaste into your [language](https://github.com/CrossPaste/crosspaste-desktop/tree/main/app/src/desktopMain/resources/i18n).
+- **🌟 Star this repository**: This is the easiest way to support ClipFlow and costs nothing.
+- **🪲 Report bugs**: Report any bugs you find on the [issue tracker](https://github.com/ClipFlow/clipflow-desktop/issues/new/choose).
+- **📖 Translate**: Help translate and polish ClipFlow into your [language](https://github.com/ClipFlow/clipflow-desktop/tree/main/app/src/desktopMain/resources/i18n).
 - **📝 Contribute**: [Code](doc/en/Contributing.md), comment on issues, and any contributions that can help the project are welcome.
-- **💖 Sponsor**: Support financially via [GitHub Sponsors](https://github.com/sponsors/CrossPaste) to help with ongoing development and maintenance.
+- **💖 Sponsor**: Support financially via [GitHub Sponsors](https://github.com/sponsors/ClipFlow) to help with ongoing development and maintenance.
 
 ## 📝 Contributors
 <!-- contributors --><a href="https://github.com/guiyanakuang"><img src="https://wsrv.nl/?url=github.com/guiyanakuang.png&w=120&h=120&fit=cover&mask=circle&output=png" width="60" height="60" alt="guiyanakuang" /></a>&nbsp;<a href="https://github.com/BiFangKNT"><img src="https://wsrv.nl/?url=github.com/BiFangKNT.png&w=120&h=120&fit=cover&mask=circle&output=png" width="60" height="60" alt="BiFangKNT" /></a>&nbsp;<a href="https://github.com/amir1376"><img src="https://wsrv.nl/?url=github.com/amir1376.png&w=120&h=120&fit=cover&mask=circle&output=png" width="60" height="60" alt="amir1376" /></a>&nbsp;<a href="https://github.com/Blushyes"><img src="https://wsrv.nl/?url=github.com/Blushyes.png&w=120&h=120&fit=cover&mask=circle&output=png" width="60" height="60" alt="Blushyes" /></a>&nbsp;<a href="https://github.com/emmanuel-ferdman"><img src="https://wsrv.nl/?url=github.com/emmanuel-ferdman.png&w=120&h=120&fit=cover&mask=circle&output=png" width="60" height="60" alt="emmanuel-ferdman" /></a>&nbsp;<a href="https://github.com/Fldicoahkiin"><img src="https://wsrv.nl/?url=github.com/Fldicoahkiin.png&w=120&h=120&fit=cover&mask=circle&output=png" width="60" height="60" alt="Fldicoahkiin" /></a>&nbsp;<a href="https://github.com/mvanhorn"><img src="https://wsrv.nl/?url=github.com/mvanhorn.png&w=120&h=120&fit=cover&mask=circle&output=png" width="60" height="60" alt="mvanhorn" /></a>&nbsp;<a href="https://github.com/swording-k"><img src="https://wsrv.nl/?url=github.com/swording-k.png&w=120&h=120&fit=cover&mask=circle&output=png" width="60" height="60" alt="swording-k" /></a>&nbsp;<a href="https://github.com/sunxiang0918"><img src="https://wsrv.nl/?url=github.com/sunxiang0918.png&w=120&h=120&fit=cover&mask=circle&output=png" width="60" height="60" alt="sunxiang0918" /></a>&nbsp;<!-- contributors -->

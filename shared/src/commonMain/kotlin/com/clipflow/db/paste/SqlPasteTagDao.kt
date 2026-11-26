@@ -1,0 +1,144 @@
+package com.clipflow.db.paste
+
+import app.cash.sqldelight.coroutines.asFlow
+import com.clipflow.Database
+import com.clipflow.paste.PasteTag
+import com.clipflow.utils.ioDispatcher
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
+
+class SqlPasteTagDao(
+    private val database: Database,
+) : PasteTagDao {
+
+    private val logger = KotlinLogging.logger {}
+
+    private val tagDatabaseQueries = database.tagDatabaseQueries
+
+    override fun getAllTagsFlow(): Flow<List<PasteTag>> =
+        tagDatabaseQueries
+            .getAllTags(PasteTag::mapper)
+            .asFlow()
+            .map { it.executeAsList() }
+            .catch { e ->
+                logger.error(e) { "Error executing getAllTagsFlow query: ${e.message}" }
+                emit(listOf())
+            }.flowOn(ioDispatcher)
+
+    override suspend fun getMaxSortOrder(): Long =
+        withContext(ioDispatcher) {
+            tagDatabaseQueries.maxSortOrder().executeAsOne()
+        }
+
+    override suspend fun createPasteTag(
+        name: String,
+        color: Long,
+    ): Long =
+        withContext(ioDispatcher) {
+            database.transactionWithResult {
+                val maxSortOrder = tagDatabaseQueries.maxSortOrder().executeAsOne()
+                val newSortOrder = maxSortOrder + 1
+                tagDatabaseQueries.createTag(name, color, newSortOrder)
+                tagDatabaseQueries.getLastId().executeAsOne()
+            }
+        }
+
+    override suspend fun updatePasteTagName(
+        id: Long,
+        name: String,
+    ) {
+        withContext(ioDispatcher) {
+            tagDatabaseQueries.updateTagName(name, id)
+        }
+    }
+
+    override suspend fun updatePasteTagColor(
+        id: Long,
+        color: Long,
+    ) {
+        withContext(ioDispatcher) {
+            tagDatabaseQueries.updateTagColor(color, id)
+        }
+    }
+
+    override suspend fun updatePasteTagsSortOrder(orderedIds: List<Long>) {
+        if (orderedIds.isEmpty()) return
+        withContext(ioDispatcher) {
+            database.transaction {
+                orderedIds.forEachIndexed { index, id ->
+                    tagDatabaseQueries.updateTagSortOrder((index + 1).toLong(), id)
+                }
+            }
+        }
+    }
+
+    override fun switchPinPasteTagBlock(
+        pasteDataId: Long,
+        pasteTagId: Long,
+    ) {
+        database.transaction {
+            val pinned = tagDatabaseQueries.isPinnedPasteTag(pasteDataId, pasteTagId).executeAsOne()
+            if (pinned) {
+                unPinPasteTag(pasteDataId, pasteTagId)
+            } else {
+                pinPasteTag(pasteDataId, pasteTagId)
+            }
+        }
+    }
+
+    override fun getPasteTagsBlock(pasteDataId: Long): List<Long> =
+        tagDatabaseQueries.getPasteTags(pasteDataId).executeAsList()
+
+    override suspend fun addTagsToPastes(
+        pasteDataIds: List<Long>,
+        pasteTagIds: Set<Long>,
+    ) {
+        if (pasteDataIds.isEmpty() || pasteTagIds.isEmpty()) return
+        withContext(ioDispatcher) {
+            database.transaction {
+                pasteDataIds.forEach { pasteId ->
+                    pasteTagIds.forEach { tagId ->
+                        tagDatabaseQueries.pinPasteTagIgnore(pasteId, tagId)
+                    }
+                }
+            }
+        }
+    }
+
+    override suspend fun countTagsForPastes(pasteDataIds: List<Long>): Map<Long, Int> {
+        if (pasteDataIds.isEmpty()) return emptyMap()
+        return withContext(ioDispatcher) {
+            tagDatabaseQueries
+                .countTagsForPastes(pasteDataIds)
+                .executeAsList()
+                .associate { it.tagId to it.pasteCount.toInt() }
+        }
+    }
+
+    override fun deletePasteTagBlock(id: Long) {
+        database.transaction {
+            tagDatabaseQueries.deletePasteTagsByTagId(id)
+            tagDatabaseQueries.deleteTag(id)
+        }
+    }
+
+    override fun getAllTagsBlock(): List<PasteTag> = tagDatabaseQueries.getAllTags(PasteTag::mapper).executeAsList()
+
+    private fun pinPasteTag(
+        pasteDataId: Long,
+        pasteTagId: Long,
+    ) {
+        tagDatabaseQueries.pinPasteTag(pasteDataId, pasteTagId)
+    }
+
+    private fun unPinPasteTag(
+        pasteDataId: Long,
+        pasteTagId: Long,
+    ) {
+        tagDatabaseQueries.unPinPasteTag(pasteDataId, pasteTagId)
+    }
+}

@@ -1,0 +1,574 @@
+package com.clipflow.cli
+
+import com.clipflow.app.AppFileType
+import com.clipflow.path.AppPathProvider
+import com.clipflow.platform.Platform
+import kotlinx.coroutines.test.runTest
+import okio.Path
+import okio.Path.Companion.toOkioPath
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
+import kotlin.io.path.createTempDirectory
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
+import java.nio.file.Path as NioPath
+
+class CliSymlinkServiceTest {
+
+    private lateinit var tempDir: NioPath
+    private lateinit var payloadBinDir: NioPath
+    private lateinit var cliBinary: NioPath
+    private lateinit var linkDir: NioPath
+    private lateinit var linkPath: NioPath
+
+    @BeforeTest
+    fun setUp() {
+        tempDir = createTempDirectory("cli-symlink-test")
+        // Mirrors Contents/Resources/bin/clipflow-cli under a fake jar path
+        payloadBinDir = tempDir.resolve("Resources").resolve("bin")
+        Files.createDirectories(payloadBinDir)
+        cliBinary = payloadBinDir.resolve("clipflow-cli")
+        Files.write(cliBinary, byteArrayOf(1))
+        linkDir = tempDir.resolve("usr-local-bin")
+        Files.createDirectories(linkDir)
+        linkPath = linkDir.resolve("clipflow")
+    }
+
+    @AfterTest
+    fun tearDown() {
+        // Restore permissions the escalation test may have dropped
+        runCatching {
+            Files.setPosixFilePermissions(linkDir, PosixFilePermissions.fromString("rwxr-xr-x"))
+        }
+        tempDir.toFile().deleteRecursively()
+    }
+
+    private fun fakeAppPathProvider(jarDir: NioPath): AppPathProvider {
+        val jarPath = jarDir.toOkioPath()
+        val root = tempDir.toOkioPath()
+        return object : AppPathProvider {
+            override val userHome: Path = root
+            override val pasteAppPath: Path = root
+            override val pasteAppJarPath: Path = jarPath
+            override val pasteAppExePath: Path = root
+            override val pasteUserPath: Path = root
+
+            override fun resolve(
+                fileName: String?,
+                appFileType: AppFileType,
+            ): Path = root
+        }
+    }
+
+    private fun macosPlatform() = Platform(name = Platform.MACOS, arch = "arm64", bitMode = 64, version = "14.0")
+
+    private fun windowsPlatform() = Platform(name = Platform.WINDOWS, arch = "amd64", bitMode = 64, version = "10.0")
+
+    /** In-memory stand-in for the registry-backed PATH manager. */
+    private class FakeWindowsUserPathManager(
+        var onPath: Boolean = false,
+        var addResult: Boolean = true,
+    ) : WindowsUserPathManager {
+        var addedDir: String? = null
+        var promotedDir: String? = null
+
+        /** Lets a test model what promoting changes (e.g. clearing a user-PATH shadow). */
+        var onPromote: (() -> Unit)? = null
+
+        override fun isOnPath(dir: String): Boolean = onPath
+
+        override fun addToUserPath(dir: String): Boolean {
+            addedDir = dir
+            if (addResult) onPath = true
+            return addResult
+        }
+
+        override fun promoteToUserPathFront(dir: String): Boolean {
+            promotedDir = dir
+            onPromote?.invoke()
+            return true
+        }
+
+        override fun newProcessPath(): String? = null
+    }
+
+    private fun createService(
+        platform: Platform = macosPlatform(),
+        jarDir: NioPath = tempDir.resolve("Resources"),
+        escalatedInstall: ((Path, Path) -> CliInstallResult)? = null,
+        windowsUserPath: WindowsUserPathManager? = null,
+        windowsCommandResolver: (suspend (String?) -> String?)? = null,
+    ): CliSymlinkService =
+        CliSymlinkService(
+            appPathProvider = fakeAppPathProvider(jarDir),
+            platform = platform,
+            linkPath = linkPath.toOkioPath(),
+            escalatedInstall = escalatedInstall,
+            windowsUserPath = windowsUserPath,
+            windowsCommandResolver = windowsCommandResolver,
+        )
+
+    private suspend fun refreshedState(service: CliSymlinkService): CliSymlinkState {
+        service.refresh()
+        return service.state.value
+    }
+
+    @Test
+    fun `state starts at probing before the first refresh`() {
+        assertEquals(CliSymlinkState.PROBING, createService().state.value)
+    }
+
+    @Test
+    fun `binary missing when cli binary is absent`() =
+        runTest {
+            Files.delete(cliBinary)
+            assertEquals(CliSymlinkState.BINARY_MISSING, refreshedState(createService()))
+        }
+
+    @Test
+    fun `externally managed on windows without a path manager`() =
+        runTest {
+            Files.write(payloadBinDir.resolve("clipflow-cli.exe"), byteArrayOf(1))
+            assertEquals(CliSymlinkState.EXTERNALLY_MANAGED, refreshedState(createService(windowsPlatform())))
+        }
+
+    @Test
+    fun `externally managed on windows when running from an MSIX payload`() =
+        runTest {
+            // MSIX installs get the execution alias at install time and their
+            // payload path changes on every update — PATH is not ours there
+            val msixJar =
+                tempDir
+                    .resolve("WindowsApps")
+                    .resolve("clipflow_2.2.0_x64")
+                    .resolve("app")
+            Files.createDirectories(msixJar.resolve("bin"))
+            Files.write(msixJar.resolve("bin").resolve("clipflow-cli.exe"), byteArrayOf(1))
+            val service =
+                createService(
+                    platform = windowsPlatform(),
+                    jarDir = msixJar,
+                    windowsUserPath = FakeWindowsUserPathManager(),
+                )
+            assertEquals(CliSymlinkState.EXTERNALLY_MANAGED, refreshedState(service))
+        }
+
+    /** The packaged exe plus its full path, as the injected where.exe stand-in reports it. */
+    private fun writeWindowsExe(): String {
+        val exe = payloadBinDir.resolve("clipflow-cli.exe")
+        Files.write(exe, byteArrayOf(1))
+        return exe.toString()
+    }
+
+    @Test
+    fun `windows states follow whether the bin dir is on the path`() =
+        runTest {
+            val exePath = writeWindowsExe()
+            val manager = FakeWindowsUserPathManager(onPath = false)
+            val service =
+                createService(
+                    platform = windowsPlatform(),
+                    windowsUserPath = manager,
+                    windowsCommandResolver = { exePath },
+                )
+            assertEquals(CliSymlinkState.NOT_INSTALLED, refreshedState(service))
+            manager.onPath = true
+            assertEquals(CliSymlinkState.INSTALLED, refreshedState(service))
+        }
+
+    @Test
+    fun `windows install adds the bin dir to the user path`() =
+        runTest {
+            val exePath = writeWindowsExe()
+            val manager = FakeWindowsUserPathManager()
+            val service =
+                createService(
+                    platform = windowsPlatform(),
+                    windowsUserPath = manager,
+                    windowsCommandResolver = { exePath.takeIf { manager.onPath } },
+                )
+            assertEquals(CliInstallResult.SUCCESS, service.install())
+            assertEquals(CliSymlinkState.INSTALLED, service.state.value)
+            assertEquals(payloadBinDir.toString(), manager.addedDir)
+        }
+
+    @Test
+    fun `windows shadowed command reports needs repair`() =
+        runTest {
+            writeWindowsExe()
+            // Our folder is on the PATH, but where.exe resolves a PATHEXT
+            // shim from another install first
+            val manager = FakeWindowsUserPathManager(onPath = true)
+            val service =
+                createService(
+                    platform = windowsPlatform(),
+                    windowsUserPath = manager,
+                    windowsCommandResolver = { "C:\\Other\\clipflow-cli.cmd" },
+                )
+            assertEquals(CliSymlinkState.NEEDS_REPAIR, refreshedState(service))
+        }
+
+    @Test
+    fun `windows unverifiable resolution never claims installed`() =
+        runTest {
+            writeWindowsExe()
+            // where.exe timed out or failed (e.g. a broken network drive on
+            // the PATH): the state must degrade to repair, not to INSTALLED
+            val manager = FakeWindowsUserPathManager(onPath = true)
+            val service =
+                createService(
+                    platform = windowsPlatform(),
+                    windowsUserPath = manager,
+                    windowsCommandResolver = { null },
+                )
+            assertEquals(CliSymlinkState.NEEDS_REPAIR, refreshedState(service))
+        }
+
+    @Test
+    fun `windows install promotes our dir to the front when shadowed`() =
+        runTest {
+            val exePath = writeWindowsExe()
+            var resolved: String? = "C:\\Other\\clipflow-cli.cmd"
+            val manager = FakeWindowsUserPathManager(onPath = true)
+            // Promoting to the front of the user PATH clears this shadow
+            manager.onPromote = { resolved = exePath }
+            val service =
+                createService(
+                    platform = windowsPlatform(),
+                    windowsUserPath = manager,
+                    windowsCommandResolver = { resolved },
+                )
+            assertEquals(CliInstallResult.SUCCESS, service.install())
+            assertEquals(CliSymlinkState.INSTALLED, service.state.value)
+            assertEquals(payloadBinDir.toString(), manager.promotedDir)
+        }
+
+    @Test
+    fun `windows install fails honestly when a machine path shadow persists`() =
+        runTest {
+            writeWindowsExe()
+            // Promoting within the user PATH cannot beat a machine PATH entry
+            val manager = FakeWindowsUserPathManager(onPath = true)
+            val service =
+                createService(
+                    platform = windowsPlatform(),
+                    windowsUserPath = manager,
+                    windowsCommandResolver = { "C:\\Machine\\clipflow-cli.exe" },
+                )
+            assertEquals(CliInstallResult.FAILURE, service.install())
+            assertEquals(CliSymlinkState.NEEDS_REPAIR, service.state.value)
+        }
+
+    @Test
+    fun `windows install failure is reported and leaves the state actionable`() =
+        runTest {
+            Files.write(payloadBinDir.resolve("clipflow-cli.exe"), byteArrayOf(1))
+            val manager = FakeWindowsUserPathManager(addResult = false)
+            val service = createService(platform = windowsPlatform(), windowsUserPath = manager)
+            assertEquals(CliInstallResult.FAILURE, service.install())
+            assertEquals(CliSymlinkState.NOT_INSTALLED, service.state.value)
+        }
+
+    @Test
+    fun `externally managed on linux when the packaged cli exists`() =
+        runTest {
+            val platform = Platform(name = Platform.LINUX, arch = "amd64", bitMode = 64, version = "6.1")
+            assertEquals(CliSymlinkState.EXTERNALLY_MANAGED, refreshedState(createService(platform)))
+        }
+
+    @Test
+    fun `binary missing on windows when only the unix binary name exists`() =
+        runTest {
+            // setUp created plain clipflow-cli; windows resolves clipflow-cli.exe
+            val platform = Platform(name = Platform.WINDOWS, arch = "amd64", bitMode = 64, version = "10.0")
+            assertEquals(CliSymlinkState.BINARY_MISSING, refreshedState(createService(platform)))
+        }
+
+    @Test
+    fun `not installed when link is missing`() =
+        runTest {
+            assertEquals(CliSymlinkState.NOT_INSTALLED, refreshedState(createService()))
+        }
+
+    @Test
+    fun `installed when link points at the bundled cli`() =
+        runTest {
+            Files.createSymbolicLink(linkPath, cliBinary)
+            assertEquals(CliSymlinkState.INSTALLED, refreshedState(createService()))
+        }
+
+    @Test
+    fun `needs repair when link points elsewhere`() =
+        runTest {
+            val other = tempDir.resolve("other-cli")
+            Files.write(other, byteArrayOf(1))
+            Files.createSymbolicLink(linkPath, other)
+            assertEquals(CliSymlinkState.NEEDS_REPAIR, refreshedState(createService()))
+        }
+
+    @Test
+    fun `needs repair when link is dangling`() =
+        runTest {
+            Files.createSymbolicLink(linkPath, tempDir.resolve("gone"))
+            assertEquals(CliSymlinkState.NEEDS_REPAIR, refreshedState(createService()))
+        }
+
+    @Test
+    fun `conflict when a regular file occupies the link path`() =
+        runTest {
+            Files.write(linkPath, byteArrayOf(1))
+            assertEquals(CliSymlinkState.CONFLICT, refreshedState(createService()))
+        }
+
+    @Test
+    fun `conflict when a directory occupies the link path`() =
+        runTest {
+            Files.createDirectories(linkPath)
+            assertEquals(CliSymlinkState.CONFLICT, refreshedState(createService()))
+        }
+
+    @Test
+    fun `translocated when the bundle runs from an AppTranslocation mount`() =
+        runTest {
+            val translocatedJar = tempDir.resolve("AppTranslocation").resolve("Resources")
+            val binDir = translocatedJar.resolve("bin")
+            Files.createDirectories(binDir)
+            Files.write(binDir.resolve("clipflow-cli"), byteArrayOf(1))
+            assertEquals(
+                CliSymlinkState.TRANSLOCATED,
+                refreshedState(createService(jarDir = translocatedJar)),
+            )
+        }
+
+    @Test
+    fun `install refuses to touch a conflicting regular file`() =
+        runTest {
+            Files.write(linkPath, byteArrayOf(7))
+            val service = createService()
+            assertEquals(CliInstallResult.FAILURE, service.install())
+            assertEquals(CliSymlinkState.CONFLICT, service.state.value)
+            // The foreign file is untouched
+            assertEquals(7, Files.readAllBytes(linkPath)[0].toInt())
+        }
+
+    @Test
+    fun `install refuses when translocated`() =
+        runTest {
+            val translocatedJar = tempDir.resolve("AppTranslocation").resolve("Resources")
+            val binDir = translocatedJar.resolve("bin")
+            Files.createDirectories(binDir)
+            Files.write(binDir.resolve("clipflow-cli"), byteArrayOf(1))
+            val service = createService(jarDir = translocatedJar)
+            assertEquals(CliInstallResult.FAILURE, service.install())
+            assertEquals(CliSymlinkState.TRANSLOCATED, service.state.value)
+        }
+
+    @Test
+    fun `install fails when escalation claims success but the link is still wrong`() =
+        runTest {
+            Files.setPosixFilePermissions(linkDir, PosixFilePermissions.fromString("r-xr-xr-x"))
+            // Escalation lies: reports SUCCESS without creating anything
+            val service = createService(escalatedInstall = { _, _ -> CliInstallResult.SUCCESS })
+            assertEquals(CliInstallResult.FAILURE, service.install())
+            assertEquals(CliSymlinkState.NOT_INSTALLED, service.state.value)
+        }
+
+    @Test
+    fun `install creates the symlink directly`() =
+        runTest {
+            val service = createService()
+            assertEquals(CliInstallResult.SUCCESS, service.install())
+            assertEquals(CliSymlinkState.INSTALLED, service.state.value)
+            assertEquals(cliBinary, Files.readSymbolicLink(linkPath))
+        }
+
+    @Test
+    fun `install repairs a link pointing elsewhere`() =
+        runTest {
+            val other = tempDir.resolve("other-cli")
+            Files.write(other, byteArrayOf(1))
+            Files.createSymbolicLink(linkPath, other)
+            val service = createService()
+            assertEquals(CliInstallResult.SUCCESS, service.install())
+            assertEquals(CliSymlinkState.INSTALLED, service.state.value)
+        }
+
+    @Test
+    fun `install falls back to escalation when the link dir is not writable`() =
+        runTest {
+            Files.setPosixFilePermissions(linkDir, PosixFilePermissions.fromString("r-xr-xr-x"))
+            var escalated = false
+            val service =
+                createService(escalatedInstall = { _, _ ->
+                    escalated = true
+                    CliInstallResult.CANCELLED
+                })
+            assertEquals(CliInstallResult.CANCELLED, service.install())
+            assertEquals(true, escalated)
+        }
+
+    @Test
+    fun `install fails when externally managed`() =
+        runTest {
+            val platform = Platform(name = Platform.LINUX, arch = "amd64", bitMode = 64, version = "6.1")
+            val service = createService(platform)
+            assertEquals(CliInstallResult.FAILURE, service.install())
+            assertEquals(CliSymlinkState.EXTERNALLY_MANAGED, service.state.value)
+        }
+
+    @Test
+    fun `install fails when the binary is missing`() =
+        runTest {
+            Files.delete(cliBinary)
+            val service = createService()
+            assertEquals(CliInstallResult.FAILURE, service.install())
+            assertEquals(CliSymlinkState.BINARY_MISSING, service.state.value)
+        }
+
+    @Test
+    fun `classify osascript results`() {
+        assertEquals(CliInstallResult.SUCCESS, classifyOsascriptResult(0, ""))
+        assertEquals(
+            CliInstallResult.CANCELLED,
+            classifyOsascriptResult(1, "execution error: User canceled. (-128)"),
+        )
+        assertEquals(CliInstallResult.FAILURE, classifyOsascriptResult(1, "some error (-12800)"))
+        assertEquals(CliInstallResult.FAILURE, classifyOsascriptResult(1, "execution error: broken"))
+    }
+
+    @Test
+    fun `direct install refuses a foreign file at execution time`() {
+        // Calls the internal attempt directly, bypassing install()'s
+        // pre-check — modeling a file that appeared after that check
+        Files.write(linkPath, byteArrayOf(9))
+        assertEquals(
+            CliInstallResult.FAILURE,
+            createService().attemptDirectInstall(cliBinary.toOkioPath()),
+        )
+        assertEquals(9, Files.readAllBytes(linkPath)[0].toInt())
+    }
+
+    @Test
+    fun `dev resolution prefers a valid configured path`() {
+        val configured = tempDir.resolve("custom-cli")
+        Files.write(configured, byteArrayOf(1))
+        assertEquals(
+            configured.toOkioPath(),
+            resolveDevCliBinary(configured.toString(), tempDir, "macosArm64", "clipflow-cli"),
+        )
+    }
+
+    @Test
+    fun `dev resolution fails fast on a configured but missing path`() {
+        assertFailsWith<IllegalStateException> {
+            resolveDevCliBinary(
+                tempDir.resolve("does-not-exist").toString(),
+                tempDir,
+                "macosArm64",
+                "clipflow-cli",
+            )
+        }
+    }
+
+    @Test
+    fun `dev resolution walks up to the conventional dist output`() {
+        val distBinary =
+            tempDir
+                .resolve("cli")
+                .resolve("dist")
+                .resolve("macosArm64")
+                .resolve("clipflow-cli")
+        Files.createDirectories(distBinary.parent)
+        Files.write(distBinary, byteArrayOf(1))
+        // Start two levels below the repo root, as an app-module cwd would be
+        val startDir = tempDir.resolve("app").resolve("build")
+        Files.createDirectories(startDir)
+        assertEquals(
+            distBinary.toOkioPath(),
+            resolveDevCliBinary(null, startDir, "macosArm64", "clipflow-cli"),
+        )
+    }
+
+    @Test
+    fun `dev resolution returns null when nothing is built or configured`() {
+        assertEquals(null, resolveDevCliBinary(null, tempDir, "macosArm64", "clipflow-cli"))
+    }
+
+    @Test
+    fun `dev resolution absolutizes a relative configured path`() {
+        // A relative path written verbatim into /usr/local/bin/clipflow
+        // would resolve relative to /usr/local/bin as a dangling link — yet
+        // still compare equal as INSTALLED
+        val configured = tempDir.resolve("custom-cli")
+        Files.write(configured, byteArrayOf(1))
+        val relative = NioPath.of("").toAbsolutePath().relativize(configured)
+        assertTrue(!relative.isAbsolute)
+        val resolved = resolveDevCliBinary(relative.toString(), tempDir, "macosArm64", "clipflow-cli")
+        assertTrue(resolved!!.isAbsolute)
+        assertEquals(configured.toAbsolutePath().normalize(), resolved.toNioPath())
+    }
+
+    @Test
+    fun `refresh picks up a binary built after startup`() =
+        runTest {
+            // Models the dev convention resolver: nothing at first, then the
+            // user runs :cli:assembleDist while the app is up
+            val lateBinary = tempDir.resolve("late-cli")
+            val service =
+                CliSymlinkService(
+                    appPathProvider = fakeAppPathProvider(tempDir.resolve("Resources")),
+                    platform = macosPlatform(),
+                    linkPath = linkPath.toOkioPath(),
+                    binaryResolverOverride = {
+                        lateBinary.takeIf { Files.isRegularFile(it) }?.toOkioPath()
+                    },
+                )
+            assertEquals(CliSymlinkState.BINARY_MISSING, refreshedState(service))
+            assertEquals(null, service.cliBinaryPath.value)
+            Files.write(lateBinary, byteArrayOf(1))
+            assertEquals(CliSymlinkState.NOT_INSTALLED, refreshedState(service))
+            assertEquals(lateBinary.toOkioPath(), service.cliBinaryPath.value)
+        }
+
+    @Test
+    fun `dist target and binary name follow the host platform`() {
+        fun platform(
+            name: String,
+            arch: String,
+        ) = Platform(name = name, arch = arch, bitMode = 64, version = "1")
+        assertEquals("macosArm64", devCliDistTarget(platform(Platform.MACOS, "aarch64")))
+        assertEquals("macosX64", devCliDistTarget(platform(Platform.MACOS, "x86_64")))
+        assertEquals("linuxArm64", devCliDistTarget(platform(Platform.LINUX, "aarch64")))
+        assertEquals("linuxX64", devCliDistTarget(platform(Platform.LINUX, "amd64")))
+        assertEquals("mingwX64", devCliDistTarget(platform(Platform.WINDOWS, "amd64")))
+        assertEquals("clipflow-cli.exe", cliBinaryFileName(platform(Platform.WINDOWS, "amd64")))
+        assertEquals("clipflow-cli", cliBinaryFileName(platform(Platform.MACOS, "aarch64")))
+    }
+
+    @Test
+    fun `parse where output takes the first non-empty line`() {
+        assertEquals(
+            "C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\clipflow-cli.exe",
+            parseWherePath("C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\clipflow-cli.exe\r"),
+        )
+        assertEquals(null, parseWherePath(""))
+        assertEquals(null, parseWherePath("  \r"))
+    }
+
+    @Test
+    fun `parse resolved command ignores profile noise`() {
+        assertEquals(
+            "/usr/local/bin/clipflow",
+            parseResolvedCommand(
+                "Welcome to my shell!\nprofile-banner\n$RESOLVED_MARKER/usr/local/bin/clipflow\n",
+            ),
+        )
+        assertEquals(null, parseResolvedCommand("profile-banner\n/tmp/some/path\n"))
+        assertEquals(null, parseResolvedCommand(""))
+        assertEquals(null, parseResolvedCommand(RESOLVED_MARKER))
+    }
+}

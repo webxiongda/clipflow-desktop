@@ -23,7 +23,7 @@ async function validateAndUpdateVersion() {
     let currentVersion = semver.parse(currentVersionString);
 
     // Read the properties file
-    const propertiesPath = path.join(__dirname, '../../app/src/desktopMain/resources/crosspaste-version.properties');
+    const propertiesPath = path.join(__dirname, '../../app/src/desktopMain/resources/clipflow-version.properties');
     console.log('Reading properties file:', propertiesPath);
     let propertiesContent = await fs.readFile(propertiesPath, 'utf8');
     const propertiesVersionMatch = propertiesContent.match(/^version=([^\r\n]+)/m);

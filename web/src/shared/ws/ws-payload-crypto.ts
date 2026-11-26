@@ -1,4 +1,4 @@
-import { CrossPasteHash, createSecureMessageProcessor } from "@/shared/core";
+import { ClipFlowHash, createSecureMessageProcessor } from "@/shared/core";
 import { KeyStore, toInt8Array } from "@/shared/storage/key-store";
 import { DeviceStore } from "@/shared/storage/device-store";
 
@@ -63,7 +63,7 @@ export function createWsPayloadDecryptor(
         }
         const processor = await deps.createProcessor(
           ownPrivate,
-          CrossPasteHash.base64Decode(peerKeyB64),
+          ClipFlowHash.base64Decode(peerKeyB64),
         );
         cached = { peerKeyB64, processor };
         cache.set(appInstanceId, cached);

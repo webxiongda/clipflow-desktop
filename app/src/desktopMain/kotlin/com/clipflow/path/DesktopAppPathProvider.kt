@@ -1,0 +1,304 @@
+package com.clipflow.path
+
+import com.clipflow.app.AppFileType
+import com.clipflow.config.DevConfig
+import com.clipflow.path.PlatformUserDataPathProvider.Companion.CLIPFLOW_DIR_NAME
+import com.clipflow.platform.Platform
+import com.clipflow.utils.SystemProperty
+import com.clipflow.utils.getAppEnvUtils
+import com.clipflow.utils.getSystemProperty
+import com.clipflow.utils.noOptionParent
+import okio.Path
+import okio.Path.Companion.toOkioPath
+import okio.Path.Companion.toPath
+import java.nio.file.Files
+import java.nio.file.Paths
+
+interface AppPathProvider : PathProvider {
+
+    val userHome: Path
+
+    val pasteAppPath: Path
+
+    val pasteAppJarPath: Path
+
+    val pasteAppExePath: Path
+
+    val pasteUserPath: Path
+}
+
+/**
+ * The payload directory every packaged launcher passes as
+ * `compose.application.resources.dir`: `app` on Windows, `Contents/Resources`
+ * on macOS, `lib/app` on Linux. Normalized first so `..` segments cannot skew
+ * the parent walks that derive the install root from it.
+ */
+private fun SystemProperty.launcherResourcesDir(): Path =
+    getOption("compose.application.resources.dir")?.toPath(normalize = true)
+        ?: throw IllegalStateException("Could not find app path: compose.application.resources.dir is not set")
+
+class DesktopPathProvider(
+    private val pasteAppPath: Path,
+    private val pasteUserPath: Path,
+) : PathProvider {
+
+    override fun resolve(
+        fileName: String?,
+        appFileType: AppFileType,
+    ): Path {
+        val path =
+            when (appFileType) {
+                AppFileType.APP -> pasteAppPath
+                AppFileType.LOG -> pasteUserPath.resolve("logs")
+                AppFileType.ENCRYPT -> pasteUserPath.resolve("encrypt")
+                AppFileType.USER -> pasteUserPath
+                AppFileType.MODULE -> pasteUserPath.resolve("module")
+                else -> pasteAppPath
+            }
+
+        autoCreateDir(path)
+
+        return fileName?.let {
+            path.resolve(fileName)
+        } ?: path
+    }
+}
+
+class DesktopAppPathProvider(
+    private val platform: Platform,
+) : AppPathProvider {
+
+    private val appEnvUtils = getAppEnvUtils()
+
+    private val appPathProvider = getAppPathProvider()
+
+    override val userHome: Path = appPathProvider.userHome
+
+    override val pasteAppPath: Path = appPathProvider.pasteAppPath
+
+    override val pasteAppJarPath: Path = appPathProvider.pasteAppJarPath
+
+    override val pasteAppExePath: Path = appPathProvider.pasteAppExePath
+
+    override val pasteUserPath: Path = appPathProvider.pasteUserPath
+
+    override fun resolve(
+        fileName: String?,
+        appFileType: AppFileType,
+    ): Path = appPathProvider.resolve(fileName, appFileType)
+
+    private fun getAppPathProvider(): AppPathProvider =
+        if (appEnvUtils.isDevelopment()) {
+            DevelopmentAppPathProvider(platform)
+        } else if (appEnvUtils.isTest()) {
+            // In the test environment, DesktopAppPathProvider will be mocked
+            this
+        } else {
+            if (platform.isWindows()) {
+                WindowsAppPathProvider()
+            } else if (platform.isMacos()) {
+                MacosAppPathProvider()
+            } else if (platform.isLinux()) {
+                LinuxAppPathProvider()
+            } else {
+                throw IllegalStateException("Unknown platform: ${platform.name}")
+            }
+        }
+}
+
+class DevelopmentAppPathProvider(
+    private val platform: Platform,
+) : AppPathProvider {
+
+    private val systemProperty = getSystemProperty()
+
+    private val composeAppDir = systemProperty.get("user.dir")
+
+    override val userHome: Path = Paths.get(systemProperty.get("user.home")).toOkioPath()
+
+    override val pasteAppPath: Path = getAppPath()
+
+    override val pasteAppJarPath: Path = getResources()
+
+    override val pasteAppExePath: Path = getResources()
+
+    override val pasteUserPath: Path = getUserPath()
+
+    private val pathProvider: PathProvider = DesktopPathProvider(pasteAppPath, pasteUserPath)
+
+    private fun getAppPath(): Path =
+        DevConfig.pasteAppPath?.let {
+            val path = it.toPath(normalize = true)
+            if (path.isAbsolute) {
+                path
+            } else {
+                composeAppDir.toPath().resolve(it)
+            }
+        } ?: composeAppDir.toPath()
+
+    private fun getUserPath(): Path =
+        DevConfig.pasteUserPath?.let {
+            val path = it.toPath(normalize = true)
+            if (path.isAbsolute) {
+                path
+            } else {
+                composeAppDir.toPath().resolve(it)
+            }
+        } ?: composeAppDir.toPath()
+
+    private fun getResources(): Path {
+        val resources = composeAppDir.toPath().resolve("resources")
+        val platformAndArch =
+            if (platform.isWindows() && platform.is64bit()) {
+                "windows-x64"
+            } else if (platform.isMacos()) {
+                if (platform.arch.contains("x86_64")) {
+                    "macos-x64"
+                } else {
+                    "macos-arm64"
+                }
+            } else if (platform.isLinux() && platform.is64bit()) {
+                if (platform.arch.contains("aarch64") || platform.arch.contains("arm")) {
+                    "linux-arm64"
+                } else {
+                    "linux-x64"
+                }
+            } else {
+                throw IllegalStateException("Unknown platform: ${platform.name}")
+            }
+        return resources.resolve(platformAndArch)
+    }
+
+    override fun resolve(
+        fileName: String?,
+        appFileType: AppFileType,
+    ): Path = pathProvider.resolve(fileName, appFileType)
+}
+
+class WindowsAppPathProvider : AppPathProvider {
+
+    private val systemProperty = getSystemProperty()
+
+    override val userHome: Path = Paths.get(systemProperty.get("user.home")).toOkioPath()
+
+    override val pasteAppPath: Path = getAppJarPath().noOptionParent.normalized()
+
+    override val pasteAppJarPath: Path = getAppJarPath()
+
+    override val pasteAppExePath: Path = getAppExePath()
+
+    override val pasteUserPath: Path = getUserPath()
+
+    private val pathProvider: PathProvider = DesktopPathProvider(pasteAppPath, pasteUserPath)
+
+    private fun getAppJarPath(): Path = systemProperty.launcherResourcesDir()
+
+    private fun getAppExePath(): Path = getAppJarPath().noOptionParent.resolve("bin").normalized()
+
+    private fun getUserPath(): Path = userHome.resolve(CLIPFLOW_DIR_NAME)
+
+    override fun resolve(
+        fileName: String?,
+        appFileType: AppFileType,
+    ): Path = pathProvider.resolve(fileName, appFileType)
+}
+
+class MacosAppPathProvider : AppPathProvider {
+
+    /**
+     * .
+     * ├── Info.plist
+     * ├── MacOS
+     * ├── PkgInfo
+     * ├── Resources
+     * ├── _CodeSignature
+     * ├── app
+     * └── runtime
+     */
+    private val systemProperty = getSystemProperty()
+
+    override val userHome: Path = Paths.get(systemProperty.get("user.home")).toOkioPath()
+
+    override val pasteAppPath: Path = getAppJarPath().noOptionParent.noOptionParent.normalized()
+
+    override val pasteAppJarPath: Path = getAppJarPath()
+
+    override val pasteAppExePath: Path = getAppExePath()
+
+    override val pasteUserPath: Path = getUserPath()
+
+    private val pathProvider: PathProvider = DesktopPathProvider(pasteAppPath, pasteUserPath)
+
+    private fun getAppJarPath(): Path = systemProperty.launcherResourcesDir()
+
+    private fun getAppExePath(): Path =
+        getAppJarPath()
+            .noOptionParent
+            .resolve("runtime")
+            .resolve("Contents")
+            .resolve("Home")
+            .resolve("lib")
+            .normalized()
+
+    private fun getUserPath(): Path {
+        val appSupportPath =
+            userHome
+                .resolve("Library")
+                .resolve("Application Support")
+                .resolve("ClipFlow")
+        val appSupportNioPath = appSupportPath.toNioPath()
+        if (Files.notExists(appSupportNioPath)) {
+            Files.createDirectories(appSupportNioPath)
+        }
+
+        return appSupportPath
+    }
+
+    override fun resolve(
+        fileName: String?,
+        appFileType: AppFileType,
+    ): Path = pathProvider.resolve(fileName, appFileType)
+}
+
+class LinuxAppPathProvider : AppPathProvider {
+
+    companion object {
+
+        const val LOCAL = ".local"
+        const val SHARE = "share"
+    }
+
+    private val systemProperty = getSystemProperty()
+
+    override val userHome: Path = Paths.get(systemProperty.get("user.home")).toOkioPath()
+
+    override val pasteAppPath: Path = getAppJarPath().noOptionParent.noOptionParent.normalized()
+
+    override val pasteAppJarPath: Path = getAppJarPath()
+
+    override val pasteAppExePath: Path = getAppExePath()
+
+    override val pasteUserPath: Path = getUserPath()
+
+    private val pathProvider: PathProvider = DesktopPathProvider(pasteAppPath, pasteUserPath)
+
+    private fun getAppJarPath(): Path = systemProperty.launcherResourcesDir()
+
+    private fun getAppExePath(): Path =
+        getAppJarPath()
+            .noOptionParent
+            .resolve("runtime")
+            .resolve("lib")
+            .normalized()
+
+    private fun getUserPath(): Path =
+        userHome
+            .resolve(LOCAL)
+            .resolve(SHARE)
+            .resolve(CLIPFLOW_DIR_NAME)
+
+    override fun resolve(
+        fileName: String?,
+        appFileType: AppFileType,
+    ): Path = pathProvider.resolve(fileName, appFileType)
+}

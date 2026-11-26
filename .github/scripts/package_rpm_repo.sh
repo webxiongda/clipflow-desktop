@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Build the dnf repository that installed RPMs subscribe to via
-# crosspaste.repo: copy the signed RPMs from an input directory into the
+# clipflow.repo: copy the signed RPMs from an input directory into the
 # repository directory, generate repodata/ with createrepo_c, detach-sign
 # repomd.xml and publish the public key next to it. Only the packages passed
 # in (the current release) are listed, so the repository always serves the
@@ -15,18 +15,18 @@ source "$ROOT_DIR/.github/scripts/rpm_signing_key.sh"
 trap 'rm -rf "$GNUPGHOME"' EXIT
 
 shopt -s nullglob
-RPM_FILES=("$RPM_DIR"/crosspaste-*.rpm)
+RPM_FILES=("$RPM_DIR"/clipflow-*.rpm)
 if [ "${#RPM_FILES[@]}" -eq 0 ]; then
-    echo "Error: No crosspaste-*.rpm in $RPM_DIR" >&2
+    echo "Error: No clipflow-*.rpm in $RPM_DIR" >&2
     exit 1
 fi
 
 rm -rf "$REPO_DIR"
 mkdir -p "$REPO_DIR"
-gpg --batch --armor --export "$GPG_FINGERPRINT" > "$REPO_DIR/RPM-GPG-KEY-CrossPaste"
+gpg --batch --armor --export "$GPG_FINGERPRINT" > "$REPO_DIR/RPM-GPG-KEY-ClipFlow"
 # Refuse unsigned packages or packages signed by another key: the shipped
-# crosspaste.repo enables gpgcheck against exactly this key.
-rpm --import "$REPO_DIR/RPM-GPG-KEY-CrossPaste"
+# clipflow.repo enables gpgcheck against exactly this key.
+rpm --import "$REPO_DIR/RPM-GPG-KEY-ClipFlow"
 for RPM_FILE in "${RPM_FILES[@]}"; do
     rpm -K "$RPM_FILE" | grep -F 'digests signatures OK'
     cp "$RPM_FILE" "$REPO_DIR/"

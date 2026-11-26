@@ -4,7 +4,7 @@ import { toHeader, WsCapability } from "./ws-types";
 /**
  * WebSocket authentication for the extension, byte-compatible with desktop's
  * `WsAuthenticationCodec` / `WsAuthenticationContext`
- * (app/src/commonMain/kotlin/com/crosspaste/net/ws/WsAuthentication.kt).
+ * (app/src/commonMain/kotlin/com/clipflow/net/ws/WsAuthentication.kt).
  *
  * The desktop requires `authVersion=1` plus an AUTH_CHALLENGE → AUTH_PROOF →
  * AUTH_ACK handshake for any WebSocket that does not originate from loopback;
@@ -25,8 +25,8 @@ export const WS_SUPPORTED_CAPABILITIES = [
   WsCapability.HEARTBEAT_ACK,
 ] as const;
 
-const HANDSHAKE_DOMAIN = "crosspaste-ws-handshake-v1";
-const ENVELOPE_DOMAIN = "crosspaste-ws-envelope-v1";
+const HANDSHAKE_DOMAIN = "clipflow-ws-handshake-v1";
+const ENVELOPE_DOMAIN = "clipflow-ws-envelope-v1";
 
 /** Subset of the K/JS `JsSecureMessageProcessor` surface used for MACs. */
 export interface WsAuthProcessor {

@@ -1,0 +1,95 @@
+package com.clipflow.sound
+
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.utils.DesktopResourceUtils
+import com.clipflow.utils.cpuDispatcher
+import com.clipflow.utils.ioDispatcher
+import com.clipflow.utils.namedScope
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.ByteArrayInputStream
+import javax.sound.sampled.AudioSystem
+import javax.sound.sampled.Clip
+import javax.sound.sampled.DataLine
+import javax.sound.sampled.LineEvent
+import kotlin.time.Duration.Companion.milliseconds
+
+class DesktopSoundService(
+    private val configManager: CommonConfigManager,
+) : SoundService {
+
+    private val logger = KotlinLogging.logger {}
+
+    private val scope = namedScope(cpuDispatcher, "DesktopSoundService")
+
+    companion object {
+
+        private const val ERROR_SOUND_PATH = "sound/Basso.wav"
+
+        private const val SUCCESS_SOUND_PATH = "sound/Blow.wav"
+
+        private const val ENABLE_PASTEBOARD_LISTENING_SOUND_PATH = "sound/Glass.wav"
+
+        private const val DISABLE_PASTEBOARD_LISTENING_SOUND_PATH = "sound/Pop.wav"
+    }
+
+    private fun playSound(filePath: String) {
+        if (!configManager.getCurrentConfig().enableSoundEffect) {
+            return
+        }
+        scope.launch {
+            runCatching {
+                withContext(ioDispatcher) {
+                    val byteArray = DesktopResourceUtils.readResourceBytes(filePath)
+
+                    ByteArrayInputStream(byteArray).use { byteInputStream ->
+                        AudioSystem.getAudioInputStream(byteInputStream).use { audioInputStream ->
+                            val format = audioInputStream.format
+
+                            val info = DataLine.Info(Clip::class.java, format)
+                            if (!AudioSystem.isLineSupported(info)) {
+                                logger.error { "Line not supported" }
+                                return@withContext
+                            }
+
+                            AudioSystem.getClip().use { clip ->
+                                clip.open(audioInputStream)
+                                val done = CompletableDeferred<Unit>()
+                                clip.addLineListener { event ->
+                                    if (event.type == LineEvent.Type.STOP) {
+                                        done.complete(Unit)
+                                    }
+                                }
+                                clip.start()
+                                withTimeoutOrNull(clip.microsecondLength.milliseconds) {
+                                    done.await()
+                                }
+                            }
+                        }
+                    }
+                }
+            }.onFailure { e ->
+                logger.error(e) { "Error playing sound $filePath" }
+            }
+        }
+    }
+
+    override fun errorSound() {
+        playSound(ERROR_SOUND_PATH)
+    }
+
+    override fun successSound() {
+        playSound(SUCCESS_SOUND_PATH)
+    }
+
+    override fun enablePasteboardListening() {
+        playSound(ENABLE_PASTEBOARD_LISTENING_SOUND_PATH)
+    }
+
+    override fun disablePasteboardListening() {
+        playSound(DISABLE_PASTEBOARD_LISTENING_SOUND_PATH)
+    }
+}

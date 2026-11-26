@@ -27,7 +27,7 @@ vi.stubGlobal("chrome", {
 
 import { SyncApi } from "../sync";
 import { KeyStore, toInt8Array } from "@/shared/storage/key-store";
-import { CrossPasteCrypto, CrossPasteHash } from "@/shared/core";
+import { ClipFlowCrypto, ClipFlowHash } from "@/shared/core";
 
 const CONFIG = {
   host: "192.168.1.10",
@@ -46,7 +46,7 @@ function jsonResponse(body: unknown): Response {
 
 /** A desktop-side identity for fabricating signed responses. */
 async function generateServerKeys() {
-  const pair = await CrossPasteCrypto.generateKeyPair();
+  const pair = await ClipFlowCrypto.generateKeyPair();
   return {
     signPublicKey: pair.signPublicKey,
     signPrivateKey: pair.signPrivateKey,
@@ -61,7 +61,7 @@ async function generateServerKeys() {
  * request built with the server's keys IS a valid response.
  */
 async function fabricateExchangeResponse(server: Awaited<ReturnType<typeof generateServerKeys>>) {
-  const json = await CrossPasteCrypto.buildKeyExchangeRequest(
+  const json = await ClipFlowCrypto.buildKeyExchangeRequest(
     server.signPrivateKey,
     server.signPublicKey,
     server.cryptPublicKey,
@@ -140,7 +140,7 @@ describe("SyncApi.exchangeV2", () => {
 
     const exchangeRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(fetchMock.mock.calls[1][0]).toContain("/sync/trust/v2/cancel");
-    expect(fetchMock.mock.calls[1][1].headers["crosspaste-exchange-timestamp"])
+    expect(fetchMock.mock.calls[1][1].headers["clipflow-exchange-timestamp"])
       .toBe(String(exchangeRequest.timestamp));
   });
 
@@ -155,7 +155,7 @@ describe("SyncApi.exchangeV2", () => {
 
     const exchangeRequest = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(fetchMock.mock.calls[1][0]).toContain("/sync/trust/v2/cancel");
-    expect(fetchMock.mock.calls[1][1].headers["crosspaste-exchange-timestamp"])
+    expect(fetchMock.mock.calls[1][1].headers["clipflow-exchange-timestamp"])
       .toBe(String(exchangeRequest.timestamp));
   });
 
@@ -163,7 +163,7 @@ describe("SyncApi.exchangeV2", () => {
     const keys = await KeyStore.generateAndStore();
     const requests = await Promise.all(
       Array.from({ length: 32 }, async () => {
-        const json = await CrossPasteCrypto.buildKeyExchangeRequest(
+        const json = await ClipFlowCrypto.buildKeyExchangeRequest(
           toInt8Array(keys.signPrivateKey),
           toInt8Array(keys.signPublicKey),
           toInt8Array(keys.cryptPublicKey),
@@ -187,7 +187,7 @@ describe("SyncApi.cancelV2", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("http://192.168.1.10:13129/sync/trust/v2/cancel");
     expect(init.method).toBe("POST");
-    expect(init.headers["crosspaste-exchange-timestamp"]).toBe("1234567890");
+    expect(init.headers["clipflow-exchange-timestamp"]).toBe("1234567890");
   });
 
   it("omits the generation header when not provided", async () => {
@@ -197,20 +197,20 @@ describe("SyncApi.cancelV2", () => {
     await SyncApi.cancelV2(CONFIG);
 
     const [, init] = fetchMock.mock.calls[0];
-    expect(init.headers["crosspaste-exchange-timestamp"]).toBeUndefined();
+    expect(init.headers["clipflow-exchange-timestamp"]).toBeUndefined();
   });
 });
 
 describe("SyncApi.computeLocalSAS", () => {
   it("is order-independent between the two key owners", async () => {
     const server = await generateServerKeys();
-    const serverCryptB64 = CrossPasteHash.base64Encode(server.cryptPublicKey);
+    const serverCryptB64 = ClipFlowHash.base64Encode(server.cryptPublicKey);
 
     const localKeys = await KeyStore.generateAndStore();
     const sas = await SyncApi.computeLocalSAS(serverCryptB64);
 
     // Recompute with swapped argument order via the core facade
-    const swapped = await CrossPasteCrypto.computeSAS(
+    const swapped = await ClipFlowCrypto.computeSAS(
       server.cryptPublicKey,
       toInt8Array(localKeys.cryptPublicKey),
     );
@@ -226,13 +226,13 @@ describe("SyncApi.confirmV2", () => {
     // TrustConfirmRequest and TrustConfirmResponse share shape and recipe
     // (sign over the decimal timestamp), so build the response with server keys.
     const confirmResponse = JSON.parse(
-      await CrossPasteCrypto.buildTrustConfirmRequest(server.signPrivateKey),
+      await ClipFlowCrypto.buildTrustConfirmRequest(server.signPrivateKey),
     );
 
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(confirmResponse));
     vi.stubGlobal("fetch", fetchMock);
 
-    const serverSignB64 = CrossPasteHash.base64Encode(server.signPublicKey);
+    const serverSignB64 = ClipFlowHash.base64Encode(server.signPublicKey);
     const syncInfo = {
       appInfo: {
         appInstanceId: "extension-app",
@@ -254,8 +254,8 @@ describe("SyncApi.confirmV2", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("http://192.168.1.10:13129/sync/trust/v2/confirm");
-    expect(init.headers["crosspaste-host"]).toBe("192.168.1.10");
-    const headerSyncInfo = JSON.parse(atob(init.headers["crosspaste-sync-info"]));
+    expect(init.headers["clipflow-host"]).toBe("192.168.1.10");
+    const headerSyncInfo = JSON.parse(atob(init.headers["clipflow-sync-info"]));
     expect(headerSyncInfo.appInfo.pairingVersion).toBe(3);
   });
 
@@ -263,12 +263,12 @@ describe("SyncApi.confirmV2", () => {
     const server = await generateServerKeys();
     const impostor = await generateServerKeys();
     const confirmResponse = JSON.parse(
-      await CrossPasteCrypto.buildTrustConfirmRequest(impostor.signPrivateKey),
+      await ClipFlowCrypto.buildTrustConfirmRequest(impostor.signPrivateKey),
     );
 
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse(confirmResponse)));
 
-    const serverSignB64 = CrossPasteHash.base64Encode(server.signPublicKey);
+    const serverSignB64 = ClipFlowHash.base64Encode(server.signPublicKey);
     await expect(
       SyncApi.confirmV2(CONFIG, serverSignB64, {
         appInfo: {
@@ -327,7 +327,7 @@ describe("SyncApi pairing v3 transport", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("http://192.168.1.10:13129/sync/pairing/v3/commit");
-    expect(init.headers["crosspaste-host"]).toBe("192.168.1.10");
-    expect(init.headers["crosspaste-sync-info"]).toBeTruthy();
+    expect(init.headers["clipflow-host"]).toBe("192.168.1.10");
+    expect(init.headers["clipflow-sync-info"]).toBeTruthy();
   });
 });

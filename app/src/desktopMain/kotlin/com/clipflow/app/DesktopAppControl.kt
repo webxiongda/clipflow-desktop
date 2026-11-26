@@ -1,0 +1,37 @@
+package com.clipflow.app
+
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.utils.getFileUtils
+
+class DesktopAppControl(
+    private val configManager: CommonConfigManager,
+) : AppControl {
+
+    private val fileUtils = getFileUtils()
+
+    override fun isEncryptionEnabled(): Boolean = true
+
+    override fun isDeviceConnectionEnabled(deviceCount: Int): Boolean = true
+
+    override fun isSyncControlEnabled(notify: Boolean): Boolean = true
+
+    override suspend fun isSendEnabled(): Boolean = true
+
+    override suspend fun isReceiveEnabled(): Boolean = true
+
+    override suspend fun completeSendOperation() {
+        // do nothing
+    }
+
+    override suspend fun completeReceiveOperation() {
+        // do nothing
+    }
+
+    override fun isFileSizeSyncEnabled(size: Long): Boolean =
+        !configManager.getCurrentConfig().enabledSyncFileSizeLimit ||
+            fileUtils.bytesSize(configManager.getCurrentConfig().maxSyncFileSize) > size
+
+    override fun isCreateTagEnabled(): Boolean = true
+
+    override fun isPinTagEnabled(): Boolean = true
+}

@@ -1,0 +1,137 @@
+package com.clipflow.paste
+
+import com.clipflow.app.AppInfo
+import com.clipflow.db.paste.PasteDao
+import com.clipflow.paste.item.PasteFiles
+import com.clipflow.paste.item.PasteItem
+import com.clipflow.paste.item.PasteItem.Companion.copy
+import com.clipflow.paste.item.PasteItemProperties
+import com.clipflow.paste.plugin.type.PasteTypePlugin
+import com.clipflow.utils.LoggerExtension.logSuspendExecutionTime
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.serialization.json.JsonPrimitive
+import kotlin.collections.set
+import kotlin.reflect.KClass
+
+class PasteCollector(
+    itemCount: Int,
+    private val appInfo: AppInfo,
+    private val pasteDao: PasteDao,
+    private val pasteReleaseService: PasteReleaseService,
+    private val sourceContext: PasteSourceContext,
+) {
+
+    private val logger = KotlinLogging.logger {}
+
+    private val preCollectors: Array<MutableMap<KClass<out PasteTypePlugin>, PasteItem>> =
+        Array(itemCount) { mutableMapOf() }
+
+    private val updateCollectors: Array<MutableSet<KClass<out PasteTypePlugin>>> =
+        Array(itemCount) { mutableSetOf() }
+
+    private val updateErrors: Array<Throwable?> = Array(itemCount) { null }
+
+    private var existError = false
+
+    fun needPreCollectionItem(
+        itemIndex: Int,
+        kclass: KClass<out PasteTypePlugin>,
+    ): Boolean = !preCollectors[itemIndex].contains(kclass)
+
+    fun needUpdateCollectItem(
+        itemIndex: Int,
+        kclass: KClass<out PasteTypePlugin>,
+    ): Boolean = !updateCollectors[itemIndex].contains(kclass)
+
+    fun preCollectItem(
+        itemIndex: Int,
+        kclass: KClass<out PasteTypePlugin>,
+        pasteItem: PasteItem,
+    ) {
+        preCollectors[itemIndex][kclass] = pasteItem
+    }
+
+    fun updateCollectItem(
+        itemIndex: Int,
+        kclass: KClass<out PasteTypePlugin>,
+        update: (PasteItem) -> PasteItem,
+    ) {
+        preCollectors[itemIndex][kclass]?.let {
+            updateCollectors[itemIndex].add(kclass)
+            preCollectors[itemIndex][kclass] = update(it)
+        }
+    }
+
+    fun collectError(
+        pasteId: Long,
+        itemIndex: Int,
+        error: Throwable,
+    ) {
+        logger.error(error) { "Failed to collect item $itemIndex of pasteId $pasteId" }
+        updateErrors[itemIndex] = error
+        existError = true
+    }
+
+    suspend fun createPrePasteData(): Long? =
+        logSuspendExecutionTime(logger, "createPrePasteData") {
+            val collector = preCollectors.filter { it.isNotEmpty() }
+            if (collector.isEmpty()) {
+                null
+            } else {
+                val pasteItems: List<PasteItem> = preCollectors.flatMap { it.values }
+
+                val pasteCollection = PasteCollection(pasteItems)
+
+                val pasteData =
+                    PasteData(
+                        appInstanceId = appInfo.appInstanceId,
+                        pasteCollection = pasteCollection,
+                        pasteType = PasteType.INVALID_TYPE.type,
+                        source = sourceContext.source,
+                        size = 0L,
+                        hash = "",
+                        pasteState = PasteState.LOADING,
+                        remote = sourceContext.remote,
+                    )
+
+                pasteDao.createPasteData(pasteData)
+            }
+        }
+
+    suspend fun completeCollect(id: Long) {
+        logSuspendExecutionTime(logger, "completeCollect") {
+            val activeIndices = preCollectors.indices.filter { preCollectors[it].isNotEmpty() }
+            if (activeIndices.isEmpty() || (existError && activeIndices.all { updateErrors[it] != null })) {
+                markDeletePasteData(id)
+            } else {
+                runCatching {
+                    var pasteItems = preCollectors.flatMap { it.values }
+                    if (sourceContext.dragAndDrop) {
+                        pasteItems =
+                            pasteItems.map { item ->
+                                if (item is PasteFiles) {
+                                    item.copy {
+                                        put(PasteItemProperties.SYNC_TO_DOWNLOAD, JsonPrimitive(true))
+                                    }
+                                } else {
+                                    item
+                                }
+                            }
+                    }
+                    pasteReleaseService.releaseLocalPasteData(id, pasteItems, sourceContext.targetAppInstanceIds)
+                }.onFailure { e ->
+                    logger.error(e) { "Failed to complete paste $id" }
+                    markDeletePasteData(id)
+                }
+            }
+        }
+    }
+
+    private suspend fun markDeletePasteData(id: Long) {
+        runCatching {
+            pasteDao.markDeletePasteData(id)
+        }.onFailure { e ->
+            logger.error(e) { "Failed to mark delete paste $id" }
+        }
+    }
+}

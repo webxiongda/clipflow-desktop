@@ -1,5 +1,5 @@
 import type { PasteItem } from "./paste-item";
-import { CrossPasteJson } from "@/shared/core";
+import { ClipFlowJson } from "@/shared/core";
 
 /** Matches desktop PasteState constants */
 export const PasteState = {
@@ -35,7 +35,7 @@ export interface PasteData {
  */
 export function parsePasteData(jsonString: string): PasteData | null {
   try {
-    const normalized = CrossPasteJson.parsePasteData(jsonString);
+    const normalized = ClipFlowJson.parsePasteData(jsonString);
     const data = JSON.parse(normalized) as PasteData;
     data.receivedAt = Date.now();
     data.pasteState = PasteState.LOADED;

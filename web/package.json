@@ -1,5 +1,5 @@
 {
-  "name": "crosspaste-extension",
+  "name": "clipflow-extension",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@crosspaste/core": "file:../core/build/dist/js/productionLibrary",
+    "@clipflow/core": "file:../core/build/dist/js/productionLibrary",
     "@js-joda/core": "^5.7.0",
     "@noble/curves": "1.9.7",
     "idb": "^8.0.1",

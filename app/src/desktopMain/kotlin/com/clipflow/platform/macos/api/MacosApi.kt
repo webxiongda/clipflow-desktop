@@ -1,0 +1,161 @@
+package com.clipflow.platform.macos.api
+
+import com.sun.jna.Callback
+import com.sun.jna.Library
+import com.sun.jna.Native
+import com.sun.jna.Pointer
+import com.sun.jna.ptr.IntByReference
+
+interface MacosApi : Library {
+
+    fun getPasteboardChangeCount(
+        currentChangeCount: Int,
+        remote: IntByReference,
+        isClipFlow: IntByReference,
+        isConcealed: IntByReference,
+    ): Int
+
+    fun writeFilesToPasteboard(
+        count: Int,
+        resolver: FileResolverCallback,
+    ): Int
+
+    fun getProvideDataCallCount(): Int
+
+    fun resetProvideDataCallCount()
+
+    fun getPassword(
+        service: String,
+        account: String,
+    ): Pointer?
+
+    fun setPassword(
+        service: String,
+        account: String,
+        password: String,
+    ): Boolean
+
+    fun updatePassword(
+        service: String,
+        account: String,
+        password: String,
+    ): Boolean
+
+    fun deletePassword(
+        service: String,
+        account: String,
+    ): Boolean
+
+    fun getComputerName(): Pointer?
+
+    fun getHardwareUUID(): Pointer?
+
+    fun getCurrentActiveAppInfo(): Pointer?
+
+    fun isApplicationActive(): Int
+
+    fun isPointerOnStatusItem(): Int
+
+    fun isFullScreenAppOnDisplay(
+        x: Double,
+        y: Double,
+        width: Double,
+        height: Double,
+    ): Int
+
+    fun getRunningApplications(): Pointer?
+
+    fun getAppInfoAtPath(path: String): Pointer?
+
+    fun saveAppIconAtPath(
+        appPath: String,
+        iconPath: String,
+    ): Boolean
+
+    fun saveAppIcon(
+        bundleIdentifier: String,
+        path: String,
+    )
+
+    fun mainToBack(appName: String)
+
+    fun searchToBack(appName: String)
+
+    fun setWindowLevelPopUpMenu(
+        windowPtr: Pointer?,
+        levelOffset: Int,
+    )
+
+    fun makeWindowNonActivating(windowPtr: Pointer?)
+
+    fun applyAcrylicBackground(
+        windowPtr: Pointer?,
+        isDark: Boolean,
+    )
+
+    // showDockIcon is an Int (0/1) rather than Boolean: JNA marshals Java boolean
+    // as a 32-bit -1 for true, which does not match Swift's zero-extended i1 Bool ABI
+    fun bringToFront(
+        windowTitle: String,
+        showDockIcon: Int,
+    )
+
+    fun setDockIconVisibility(
+        showDockIcon: Int,
+        restoreActivation: Int,
+    )
+
+    fun setAboutMenuItemTitle(title: String)
+
+    fun simulatePasteCommand(
+        array: Pointer,
+        count: Int,
+    )
+
+    fun checkAccessibilityPermissions(): Boolean
+
+    fun saveIconByExt(
+        ext: String,
+        path: String,
+    )
+
+    fun createVideoThumbnail(
+        videoPath: String,
+        thumbnailPath: String,
+    ): Boolean
+
+    // Returns 1 when posted, 0 when Notification Center is unavailable to this process
+    fun postUserNotification(
+        title: String,
+        body: String,
+    ): Int
+
+    fun startNetworkStateMonitor(callback: NetworkChangeCallback)
+
+    fun stopNetworkStateMonitor()
+
+    companion object {
+        val INSTANCE: MacosApi = Native.load("MacosApi", MacosApi::class.java)
+
+        fun getString(ptr: Pointer?): String? {
+            val pointer = ptr ?: return null
+            return try {
+                pointer.getString(0)
+            } finally {
+                Native.free(Pointer.nativeValue(pointer))
+            }
+        }
+    }
+}
+
+fun interface FileResolverCallback : Callback {
+    fun invoke(
+        index: Int,
+        buffer: Pointer,
+        bufferSize: Int,
+    ): Int
+}
+
+fun interface NetworkChangeCallback : Callback {
+    fun invoke()
+}

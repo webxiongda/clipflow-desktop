@@ -11,11 +11,11 @@ import { useI18n } from "@/shared/i18n/use-i18n";
 import { APP_VERSION } from "@/shared/app/version.generated";
 
 const LINKS = {
-  website: "https://crosspaste.com",
-  tutorial: "https://crosspaste.com/tutorial",
-  changelog: "https://crosspaste.com/changelog",
-  feedback: "https://github.com/CrossPaste/crosspaste-desktop/issues",
-  email: "mailto:support@crosspaste.com",
+  website: "https://clipflow.com",
+  tutorial: "https://clipflow.com/tutorial",
+  changelog: "https://clipflow.com/changelog",
+  feedback: "https://github.com/ClipFlow/clipflow-desktop/issues",
+  email: "mailto:support@clipflow.com",
 };
 
 function openUrl(url: string) {
@@ -105,12 +105,12 @@ export function AboutView({ onBack }: Props) {
           <div className="flex flex-col items-center gap-3 py-6">
             <img
               src="/public/icons/icon-128.png"
-              alt="CrossPaste"
+              alt="ClipFlow"
               className="w-[72px] h-[72px] rounded-2xl"
             />
             <div className="flex flex-col items-center gap-1">
               <span className="text-lg font-bold text-m3-on-surface">
-                CrossPaste
+                ClipFlow
               </span>
               <span className="text-xs text-m3-on-surface-variant">
                 v{APP_VERSION}
@@ -180,7 +180,7 @@ export function AboutView({ onBack }: Props) {
 
           {/* Footer */}
           <p className="text-center text-[10px] text-m3-outline py-2">
-            Made with ❤️ by CrossPaste Team
+            Made with ❤️ by ClipFlow Team
             <br />© 2024 Compile Future
           </p>
         </div>

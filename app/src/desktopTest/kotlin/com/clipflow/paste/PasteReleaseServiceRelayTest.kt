@@ -1,0 +1,156 @@
+package com.clipflow.paste
+
+import com.clipflow.Database
+import com.clipflow.config.AppConfig
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.db.paste.PasteDao
+import com.clipflow.paste.item.CreatePasteItemHelper.createFilesPasteItem
+import com.clipflow.paste.item.CreatePasteItemHelper.createTextPasteItem
+import com.clipflow.paste.item.PasteItemReader
+import com.clipflow.path.UserDataPathProvider
+import com.clipflow.presist.SingleFileInfoTree
+import com.clipflow.task.TaskBuilder
+import com.clipflow.task.TaskSubmitter
+import com.clipflow.utils.getJsonUtils
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import kotlinx.coroutines.runBlocking
+import kotlin.test.Test
+import kotlin.test.assertTrue
+
+class PasteReleaseServiceRelayTest {
+
+    @Suppress("unused")
+    private val jsonUtils = getJsonUtils()
+
+    private val seen = setOf("origin-device", "sibling-device")
+
+    private val taskBuilder = mockk<TaskBuilder>(relaxed = true)
+
+    private val pasteDao =
+        mockk<PasteDao>(relaxed = true).also {
+            coEvery { it.createPasteData(any(), any()) } returns 42L
+            coEvery { it.markDeleteFailedReceive(any()) } returns Result.success(Unit)
+        }
+
+    private val service =
+        PasteReleaseService(
+            commonConfigManager = configManager(),
+            currentPaste = mockk(relaxed = true),
+            database = mockk<Database>(relaxed = true),
+            notificationManager = mockk(relaxed = true),
+            pasteDao = pasteDao,
+            pasteItemReader = mockk<PasteItemReader>(relaxed = true),
+            pasteProcessPlugins = emptyList(),
+            pastePullCursorManager = mockk(relaxed = true),
+            searchContentService = mockk(relaxed = true),
+            syncRuntimeInfoDao = mockk(relaxed = true),
+            taskSubmitter =
+                object : TaskSubmitter {
+                    override suspend fun submit(block: suspend TaskBuilder.() -> Unit) {
+                        taskBuilder.block()
+                    }
+                },
+            userDataPathProvider = mockk<UserDataPathProvider>(relaxed = true),
+        )
+
+    private fun configManager(): CommonConfigManager {
+        val appConfig = mockk<AppConfig>(relaxed = true)
+        every { appConfig.maxNonFilePasteSize } returns 8L
+        every { appConfig.maxBackupFileSize } returns 100L
+        every { appConfig.largeFileDestinationPath } returns ""
+        val configManager = mockk<CommonConfigManager>(relaxed = true)
+        every { configManager.getCurrentConfig() } returns appConfig
+        return configManager
+    }
+
+    private fun filePasteData(): PasteData {
+        val filesItem =
+            createFilesPasteItem(
+                relativePathList = listOf("a.txt"),
+                fileInfoTreeMap = mapOf("a.txt" to SingleFileInfoTree(size = 1024L, hash = "h")),
+            )
+        return PasteData(
+            appInstanceId = "source-device",
+            pasteAppearItem = filesItem,
+            pasteCollection = PasteCollection(emptyList()),
+            pasteType = PasteType.FILE_TYPE.type,
+            source = null,
+            size = 1024L,
+            hash = "h",
+            remote = true,
+        )
+    }
+
+    @Test
+    fun `remote non-file paste is relayed with the sender's seen set`() =
+        runBlocking<Unit> {
+            val item = createTextPasteItem(text = "relay me")
+            val pasteData =
+                PasteData(
+                    appInstanceId = "source-device",
+                    pasteAppearItem = item,
+                    pasteCollection = PasteCollection(emptyList()),
+                    pasteType = PasteType.TEXT_TYPE.type,
+                    source = null,
+                    size = item.size,
+                    hash = item.hash,
+                    remote = true,
+                )
+
+            val result = service.releaseRemotePasteData(pasteData, seen) {}
+
+            assertTrue(result.isSuccess)
+            verify(exactly = 1) { taskBuilder.addRelaySyncTask(42L, "source-device", seen) }
+        }
+
+    @Test
+    fun `remote file paste defers its relay to the pull task and carries the seen set`() =
+        runBlocking<Unit> {
+            val result = service.releaseRemotePasteData(filePasteData(), seen) {}
+
+            assertTrue(result.isSuccess)
+            verify(exactly = 1) { taskBuilder.addPullFileTask(42L, any(), seen, true, false) }
+            verify(exactly = 0) { taskBuilder.addRelaySyncTask(any(), any(), any()) }
+        }
+
+    @Test
+    fun `remote file paste passes writePasteboard false to pull task`() =
+        runBlocking<Unit> {
+            val result = service.releaseRemotePasteData(filePasteData(), seen, writePasteboard = false) {}
+
+            assertTrue(result.isSuccess)
+            verify(exactly = 1) { taskBuilder.addPullFileTask(42L, any(), seen, false, false) }
+        }
+
+    @Test
+    fun `silent catchup must not broadcast old content as a live clipboard update`() =
+        runBlocking<Unit> {
+            val item = createTextPasteItem(text = "old catchup content")
+            val pasteData =
+                PasteData(
+                    appInstanceId = "source-device",
+                    pasteAppearItem = item,
+                    pasteCollection = PasteCollection(emptyList()),
+                    pasteType = PasteType.TEXT_TYPE.type,
+                    size = item.size,
+                    hash = item.hash,
+                    remote = true,
+                )
+            val result = service.releaseRemotePasteData(pasteData, writePasteboard = false, historyPull = true) {}
+            assertTrue(result.isSuccess)
+            verify(exactly = 0) { taskBuilder.addRelaySyncTask(any(), any(), any()) }
+        }
+
+    @Test
+    fun `failed file task creation discards its orphan row so catchup can retry`() =
+        runBlocking<Unit> {
+            every { taskBuilder.addPullFileTask(any(), any(), any(), any(), any()) } throws
+                IllegalStateException("disk")
+            val result = service.releaseRemotePasteData(filePasteData(), historyPull = true) { }
+            assertTrue(result.isFailure)
+            io.mockk.coVerify(exactly = 1) { pasteDao.markDeleteFailedReceive(42L) }
+        }
+}

@@ -23,12 +23,12 @@ graph LR
 
 - **OCR** _(since v1.2.3)_ — extract text from images locally, with no network calls.
 - **MCP server** _(since v1.2.8)_ — expose pasteboard history to AI assistants via the Model Context Protocol.
-- **Chrome extension** _(since v2.0)_ — sync clipboard between the browser and any paired CrossPaste device.
+- **Chrome extension** _(since v2.0)_ — sync clipboard between the browser and any paired ClipFlow device.
 - **Command-line mode** _(since v2.2)_ — copy, paste, and search your history from the terminal and shell scripts.
 
 ## Upcoming
 
-- **Plugin system** — let the community extend CrossPaste with custom paste types and integrations.
+- **Plugin system** — let the community extend ClipFlow with custom paste types and integrations.
 
 **Note**: This roadmap represents our current development plans and vision for the project. As development progresses, adjustments may be made based on community feedback, technological advancements, and changing priorities. We welcome community involvement and contributions! If you're interested in helping shape the future of this project, please consider joining our community and contributing to its growth.
 

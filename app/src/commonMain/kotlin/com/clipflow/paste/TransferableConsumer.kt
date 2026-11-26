@@ -1,0 +1,70 @@
+package com.clipflow.paste
+
+import com.clipflow.paste.plugin.type.PasteTypePlugin
+import com.clipflow.utils.LoggerExtension.logExecutionTime
+import com.clipflow.utils.LoggerExtension.logSuspendExecutionTime
+import io.github.oshai.kotlinlogging.KLogger
+import kotlin.collections.component1
+
+interface TransferableConsumer {
+
+    val logger: KLogger
+
+    suspend fun consume(
+        pasteTransferable: PasteTransferable,
+        sourceContext: PasteSourceContext,
+    ): Result<Unit>
+
+    fun getPlugin(identity: String): PasteTypePlugin?
+
+    fun preCollect(
+        dataFlavorMap: Map<String, List<PasteDataFlavor>>,
+        pasteTransferable: PasteTransferable,
+        pasteCollector: PasteCollector,
+    ) {
+        logExecutionTime(logger, "preCollect") {
+            for ((itemIndex, entry) in dataFlavorMap.entries.withIndex()) {
+                val identity = entry.key
+                logger.debug { "Processing item $itemIndex with flavor: $identity" }
+                val plugin = getPlugin(identity) ?: continue
+                if (pasteCollector.needPreCollectionItem(itemIndex, plugin::class)) {
+                    plugin.createPrePasteItem(
+                        itemIndex = itemIndex,
+                        identifier = identity,
+                        pasteTransferable = pasteTransferable,
+                        pasteCollector = pasteCollector,
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun updatePasteData(
+        pasteId: Long,
+        dataFlavorMap: Map<String, List<PasteDataFlavor>>,
+        pasteTransferable: PasteTransferable,
+        pasteCollector: PasteCollector,
+    ) {
+        logSuspendExecutionTime(logger, "updatePasteData") {
+            for ((itemIndex, entry) in dataFlavorMap.entries.withIndex()) {
+                val (identity, flavors) = entry
+                val plugin = getPlugin(identity) ?: continue
+                for (flavor in flavors) {
+                    if (pasteCollector.needUpdateCollectItem(itemIndex, plugin::class)) {
+                        plugin.loadRepresentation(
+                            pasteId,
+                            itemIndex,
+                            identity,
+                            flavor,
+                            dataFlavorMap,
+                            pasteTransferable,
+                            pasteCollector,
+                        )
+                    } else {
+                        break
+                    }
+                }
+            }
+        }
+    }
+}

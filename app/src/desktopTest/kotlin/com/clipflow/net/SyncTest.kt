@@ -1,0 +1,390 @@
+package com.clipflow.net
+
+import com.clipflow.app.AppInfo
+import com.clipflow.app.AppTokenApi
+import com.clipflow.app.EndpointInfoFactory
+import com.clipflow.app.TestAppTokenService
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.config.ReadWriteConfig
+import com.clipflow.config.TestAppConfig
+import com.clipflow.config.TestConfigManager
+import com.clipflow.config.TestReadWritePort
+import com.clipflow.db.secure.MemorySecureIO
+import com.clipflow.db.secure.SecureIO
+import com.clipflow.db.sync.HostInfo
+import com.clipflow.dto.sync.SyncInfo
+import com.clipflow.net.clientapi.FailureResult
+import com.clipflow.net.clientapi.SuccessResult
+import com.clipflow.net.clientapi.SyncClientApi
+import com.clipflow.net.exception.DesktopExceptionHandler
+import com.clipflow.net.exception.ExceptionHandler
+import com.clipflow.net.plugin.ClientDecryptPlugin
+import com.clipflow.net.plugin.ClientEncryptPlugin
+import com.clipflow.net.plugin.ServerDecryptionPluginFactory
+import com.clipflow.net.plugin.ServerEncryptPluginFactory
+import com.clipflow.net.routing.SyncRoutingApi
+import com.clipflow.net.routing.TestSyncRoutingApi
+import com.clipflow.platform.Platform
+import com.clipflow.secure.GeneralSecureStore
+import com.clipflow.secure.SecureKeyPairSerializer
+import com.clipflow.secure.SecureStore
+import com.clipflow.sync.PendingKeyExchangeStore
+import com.clipflow.test.IntegrationTest
+import com.clipflow.utils.CryptographyUtils.generateSecureKeyPair
+import com.clipflow.utils.DesktopDeviceUtils
+import com.clipflow.utils.DeviceUtils
+import com.clipflow.utils.HostAndPort
+import com.clipflow.utils.buildUrl
+import com.clipflow.utils.getPlatformUtils
+import io.ktor.server.cio.CIOApplicationEngine
+import io.ktor.util.reflect.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.koin.core.context.GlobalContext
+import org.koin.core.qualifier.named
+import org.koin.dsl.module
+import org.koin.test.KoinTest
+import org.koin.test.inject
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertContentEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+
+@IntegrationTest
+class SyncTest : KoinTest {
+
+    private val appTokenApi by inject<AppTokenApi>()
+
+    private val endpointInfoFactory by inject<EndpointInfoFactory>()
+
+    private val pasteServer by inject<Server>()
+
+    private val readWritePort by inject<ReadWriteConfig<Int>>(named("readWritePort"))
+
+    private val secureKeyPairSerializer by inject<SecureKeyPairSerializer>()
+
+    private val serverSecureIO by inject<SecureIO>(named("serverSecureIO"))
+
+    private val clientSecureIO by inject<SecureIO>(named("clientSecureIO"))
+
+    private val syncClientApi by inject<SyncClientApi>()
+
+    private val pasteClient by inject<PasteClient>()
+
+    companion object {
+
+        private val serverAppInfo =
+            AppInfo(
+                appInstanceId = "server-id",
+                appVersion = "0.0.1",
+                appRevision = "1",
+                userName = "server-user",
+            )
+
+        private val clientAppInfo =
+            AppInfo(
+                appInstanceId = "client-id",
+                appVersion = "0.0.1",
+                appRevision = "1",
+                userName = "client-user",
+            )
+
+        private val serverSecureKeyPair = runBlocking { generateSecureKeyPair() }
+
+        private val clientSecureKeyPair = runBlocking { generateSecureKeyPair() }
+
+        private val platform = getPlatformUtils().platform
+
+        private val testModule =
+            module {
+                // simple component
+                single<AppInfo>(named("serverAppInfo")) { serverAppInfo }
+                single<AppInfo>(named("clientAppInfo")) { clientAppInfo }
+                single<DeviceUtils> { DesktopDeviceUtils(platform) }
+                single<EndpointInfoFactory> { EndpointInfoFactory(get(), lazy { get<Server>() }, get()) }
+                single<ReadWriteConfig<Int>>(named("readWritePort")) { TestReadWritePort() }
+
+                // net component
+                single<ExceptionHandler> { DesktopExceptionHandler() }
+                single<NetworkInterfaceService> {
+                    TestNetworkInterfaceService(
+                        testNetworkInterfaces =
+                            listOf(
+                                NetworkInterfaceInfo("eth0", 24, "192.168.1.100"),
+                                NetworkInterfaceInfo("wlan0", 24, "192.168.1.101"),
+                            ),
+                        testPreferredInterface = NetworkInterfaceInfo("eth0", 24, "192.168.1.100"),
+                    )
+                }
+                single<PasteClient> { PasteClient(get(named("clientAppInfo")), get(), get()) }
+                single<Platform> { platform }
+                single<Server> {
+                    DesktopPasteServer(
+                        get(named("readWritePort")),
+                        get(),
+                        get<ServerFactory<CIOApplicationEngine, CIOApplicationEngine.Configuration>>(),
+                        get(),
+                    )
+                }
+                single<CommonConfigManager> { TestConfigManager(TestAppConfig()) }
+                single<PendingKeyExchangeStore> { PendingKeyExchangeStore() }
+                single<SyncApi> { SyncApi }
+                single<ServerFactory<CIOApplicationEngine, CIOApplicationEngine.Configuration>> {
+                    DesktopServerFactory()
+                }
+                single<SyncInfoFactory> { SyncInfoFactory(get(named("serverAppInfo")), get()) }
+                single<ServerModule> {
+                    TestServerModule(
+                        appInfo = get(named("serverAppInfo")),
+                        appTokenApi = get(),
+                        configManager = get(),
+                        exceptionHandler = get(),
+                        networkInterfaceService = get(),
+                        pendingKeyExchangeStore = get(),
+                        secureKeyPairSerializer = get(),
+                        secureStore = get(named("serverSecureStore")),
+                        serverEncryptPluginFactory = get(),
+                        serverDecryptionPluginFactory = get(),
+                        syncApi = get(),
+                        syncInfoFactory = get(),
+                        syncRoutingApi = get(),
+                    )
+                }
+                single<SyncClientApi> { SyncClientApi(get(), get(), get(), get(named("clientSecureStore")), get()) }
+                single<SyncRoutingApi> { TestSyncRoutingApi() }
+
+                // secure component
+                single<ClientDecryptPlugin> { ClientDecryptPlugin(get(named("clientSecureStore"))) }
+                single<ClientEncryptPlugin> { ClientEncryptPlugin(get(named("clientSecureStore"))) }
+                single<SecureKeyPairSerializer> { SecureKeyPairSerializer() }
+                single<SecureStore>(named("serverSecureStore")) {
+                    GeneralSecureStore(serverSecureKeyPair, get(), get(named("serverSecureIO")))
+                }
+                single<SecureStore>(named("clientSecureStore")) {
+                    GeneralSecureStore(clientSecureKeyPair, get(), get(named("clientSecureIO")))
+                }
+                single<ServerDecryptionPluginFactory> { ServerDecryptionPluginFactory(get(named("serverSecureStore"))) }
+                single<ServerEncryptPluginFactory> { ServerEncryptPluginFactory(get(named("serverSecureStore"))) }
+
+                // io component
+                single<SecureIO>(named("serverSecureIO")) { MemorySecureIO() }
+                single<SecureIO>(named("clientSecureIO")) { MemorySecureIO() }
+
+                // ui component
+                single<AppTokenApi> { TestAppTokenService() }
+            }
+    }
+
+    @BeforeTest
+    fun setUp() {
+        GlobalContext.startKoin {
+            modules(testModule)
+        }
+    }
+
+    @AfterTest
+    fun tearDown() {
+        GlobalContext.stopKoin()
+    }
+
+    @Test
+    fun testTrustAndHeartbeat() {
+        var result =
+            runBlocking {
+                pasteServer.start()
+                appTokenApi.startRefresh(showToken = false)
+                withTimeout(5.seconds) { appTokenApi.refresh.first { it } }
+
+                syncClientApi.trust(
+                    serverAppInfo.appInstanceId,
+                    "localhost",
+                    appTokenApi.token.value
+                        .concatToString()
+                        .toInt(),
+                ) {
+                    buildUrl(HostAndPort("localhost", readWritePort.getValue()))
+                }
+            }
+
+        assertTrue(result is SuccessResult)
+
+        assertTrue(
+            runBlocking {
+                serverSecureIO.existCryptPublicKey(clientAppInfo.appInstanceId)
+            },
+        )
+        assertTrue(
+            runBlocking {
+                clientSecureIO.existCryptPublicKey(serverAppInfo.appInstanceId)
+            },
+        )
+        assertContentEquals(
+            runBlocking {
+                serverSecureIO.serializedPublicKey(clientAppInfo.appInstanceId)
+            },
+            runBlocking {
+                secureKeyPairSerializer.encodeCryptPublicKey(clientSecureKeyPair.cryptKeyPair.publicKey)
+            },
+        )
+        assertContentEquals(
+            runBlocking {
+                clientSecureIO.serializedPublicKey(serverAppInfo.appInstanceId)
+            },
+            runBlocking {
+                secureKeyPairSerializer.encodeCryptPublicKey(serverSecureKeyPair.cryptKeyPair.publicKey)
+            },
+        )
+
+        result =
+            runBlocking {
+                syncClientApi.heartbeat(targetAppInstanceId = serverAppInfo.appInstanceId) {
+                    buildUrl(HostAndPort("localhost", readWritePort.getValue()))
+                }
+            }
+
+        assertTrue(result is SuccessResult)
+
+        result =
+            runBlocking {
+                val syncInfo =
+                    SyncInfo(
+                        appInfo = clientAppInfo,
+                        endpointInfo =
+                            endpointInfoFactory.createEndpointInfo(
+                                listOf(
+                                    HostInfo(
+                                        hostAddress = "localhost",
+                                        networkPrefixLength = 24,
+                                    ),
+                                ),
+                            ),
+                    )
+
+                syncClientApi.heartbeat(
+                    syncInfo = syncInfo,
+                    targetAppInstanceId = serverAppInfo.appInstanceId,
+                ) {
+                    buildUrl(HostAndPort("localhost", readWritePort.getValue()))
+                }
+            }
+
+        assertTrue(result is SuccessResult)
+
+        runBlocking { pasteServer.stop() }
+    }
+
+    private suspend fun exchangeAndAwaitPending(exchangeGeneration: Long) {
+        val exchangeResult =
+            syncClientApi.exchangeKeys(serverAppInfo.appInstanceId, exchangeGeneration) {
+                buildUrl(HostAndPort("localhost", readWritePort.getValue()))
+            }
+        assertTrue(exchangeResult is SuccessResult)
+
+        // The exchange parks one token-refresh count and one pending verifier
+        // on the responder (both updated asynchronously).
+        withTimeout(5.seconds) {
+            appTokenApi.refresh.first { it }
+            appTokenApi.pendingVerifiers.first { clientAppInfo.appInstanceId in it }
+        }
+    }
+
+    @Test
+    fun testV2ExchangeCancelReleasesPendingExchange() {
+        runBlocking {
+            pasteServer.start()
+
+            exchangeAndAwaitPending(exchangeGeneration = 1000L)
+
+            val cancelResult =
+                syncClientApi.trustV2Cancel(1000L) {
+                    buildUrl(HostAndPort("localhost", readWritePort.getValue()))
+                }
+            assertTrue(cancelResult is SuccessResult)
+
+            // Cancel funnels through the unified release path: the verifier is
+            // removed and the refresh count drains back to zero (#4684).
+            withTimeout(5.seconds) {
+                appTokenApi.refresh.first { !it }
+                appTokenApi.pendingVerifiers.first { it.isEmpty() }
+            }
+
+            // The pending exchange was consumed, so a late confirm cannot match.
+            val confirmResult =
+                syncClientApi.trustV2Confirm(serverAppInfo.appInstanceId, "localhost") {
+                    buildUrl(HostAndPort("localhost", readWritePort.getValue()))
+                }
+            assertTrue(confirmResult is FailureResult)
+
+            pasteServer.stop()
+        }
+    }
+
+    @Test
+    fun testV2StaleCancelDoesNotReleaseNewerExchange() {
+        runBlocking {
+            pasteServer.start()
+
+            exchangeAndAwaitPending(exchangeGeneration = 1000L)
+
+            // A second exchange supersedes the first entry under a distinct
+            // client-generated generation.
+            exchangeAndAwaitPending(exchangeGeneration = 2000L)
+
+            // The stale cancel names the superseded exchange: the responder
+            // must keep the current one alive.
+            val staleCancel =
+                syncClientApi.trustV2Cancel(1000L) {
+                    buildUrl(HostAndPort("localhost", readWritePort.getValue()))
+                }
+            assertTrue(staleCancel is SuccessResult)
+            delay(200.milliseconds)
+            assertTrue(appTokenApi.refresh.value)
+            assertTrue(clientAppInfo.appInstanceId in appTokenApi.pendingVerifiers.value)
+
+            // Cancelling the current generation releases it.
+            val currentCancel =
+                syncClientApi.trustV2Cancel(2000L) {
+                    buildUrl(HostAndPort("localhost", readWritePort.getValue()))
+                }
+            assertTrue(currentCancel is SuccessResult)
+            withTimeout(5.seconds) {
+                appTokenApi.refresh.first { !it }
+                appTokenApi.pendingVerifiers.first { it.isEmpty() }
+            }
+
+            pasteServer.stop()
+        }
+    }
+
+    @Test
+    fun testV2CancelWithoutGenerationHeaderKeepsLegacySemantics() {
+        runBlocking {
+            pasteServer.start()
+
+            exchangeAndAwaitPending(exchangeGeneration = 1000L)
+
+            // Older extension versions without the generation header keep the
+            // original unconditional-release behaviour.
+            pasteClient.post(
+                "",
+                typeInfo<String>(),
+                urlBuilder = {
+                    buildUrl(HostAndPort("localhost", readWritePort.getValue()))
+                    buildUrl("sync", "trust", "v2", "cancel")
+                },
+            )
+
+            withTimeout(5.seconds) {
+                appTokenApi.refresh.first { !it }
+                appTokenApi.pendingVerifiers.first { it.isEmpty() }
+            }
+
+            pasteServer.stop()
+        }
+    }
+}

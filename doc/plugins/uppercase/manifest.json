@@ -1,5 +1,5 @@
 {
-  "id": "com.crosspaste.sample.uppercase",
+  "id": "com.clipflow.sample.uppercase",
   "version": "1.0.0",
   "minAppVersion": "2.2.0",
   "name": { "en": "Uppercase", "zh": "转为大写" },

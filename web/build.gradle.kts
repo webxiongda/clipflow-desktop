@@ -8,15 +8,15 @@ versionProperties.load(
         project.projectDir
             .toPath()
             .parent
-            .resolve("app/src/desktopMain/resources/crosspaste-version.properties")
+            .resolve("app/src/desktopMain/resources/clipflow-version.properties")
             .toFile(),
     ),
 )
 
-group = "com.crosspaste"
+group = "com.clipflow"
 version =
     checkNotNull(versionProperties.getProperty("version")) {
-        "Missing 'version' in crosspaste-version.properties"
+        "Missing 'version' in clipflow-version.properties"
     }
 
 fun gitRevision(): String? =
@@ -36,7 +36,7 @@ tasks.register("generateVersion") {
         project.projectDir
             .toPath()
             .parent
-            .resolve("app/src/desktopMain/resources/crosspaste-version.properties")
+            .resolve("app/src/desktopMain/resources/clipflow-version.properties")
             .toFile()
     val tsOutputFile = project.file("src/shared/app/version.generated.ts")
     val manifestFile = project.file("manifest.json")
@@ -54,7 +54,7 @@ tasks.register("generateVersion") {
         tsOutputFile.parentFile.mkdirs()
         tsOutputFile.writeText(
             """
-            |// Auto-generated from app/src/desktopMain/resources/crosspaste-version.properties
+            |// Auto-generated from app/src/desktopMain/resources/clipflow-version.properties
             |// Do not edit manually — run ./gradlew :web:generateVersion to regenerate
             |
             |export const APP_VERSION = "$fullVersion";
@@ -258,7 +258,7 @@ tasks.register<Zip>("packageExtension") {
                 versionProperties.getProperty("revision")?.takeIf { it.isNotBlank() }
                     ?: gitRevision()
                     ?: error("Cannot resolve revision for zip name")
-            "crosspaste-extension-$version.$rev.zip"
+            "clipflow-extension-$version.$rev.zip"
         },
     )
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))

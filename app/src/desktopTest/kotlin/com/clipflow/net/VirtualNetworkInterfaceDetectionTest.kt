@@ -1,0 +1,413 @@
+package com.clipflow.net
+
+import com.clipflow.net.AbstractNetworkInterfaceService.Companion.isLikelyVirtual
+import com.clipflow.net.AbstractNetworkInterfaceService.Companion.isLikelyVirtualByMac
+import com.clipflow.net.AbstractNetworkInterfaceService.Companion.isLikelyVirtualByName
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+class VirtualNetworkInterfaceDetectionTest {
+
+    // ===== Name-based detection tests =====
+
+    @Test
+    fun `VMware interfaces detected as virtual by name`() {
+        assertTrue(isLikelyVirtualByName("vmnet1"))
+        assertTrue(isLikelyVirtualByName("vmnet8"))
+        assertTrue(isLikelyVirtualByName("VMnet0"))
+        assertTrue(isLikelyVirtualByName("VMware Network Adapter VMnet8"))
+    }
+
+    @Test
+    fun `VirtualBox interfaces detected as virtual by name`() {
+        assertTrue(isLikelyVirtualByName("vboxnet0"))
+        assertTrue(isLikelyVirtualByName("vboxnet1"))
+        assertTrue(isLikelyVirtualByName("VBoxNet2"))
+    }
+
+    @Test
+    fun `Docker interfaces detected as virtual by name`() {
+        assertTrue(isLikelyVirtualByName("docker0"))
+        assertTrue(isLikelyVirtualByName("br-abcdef123456"))
+        assertTrue(isLikelyVirtualByName("veth1234abc"))
+    }
+
+    @Test
+    fun `Hyper-V interfaces detected as virtual by name`() {
+        assertTrue(isLikelyVirtualByName("vEthernet (Default Switch)"))
+    }
+
+    @Test
+    fun `VPN tunnel interfaces detected as virtual by name`() {
+        assertTrue(isLikelyVirtualByName("tun0"))
+        assertTrue(isLikelyVirtualByName("tap0"))
+        assertTrue(isLikelyVirtualByName("utun3"))
+        assertTrue(isLikelyVirtualByName("pangp0"))
+    }
+
+    @Test
+    fun `WSL interfaces detected as virtual by name`() {
+        assertTrue(isLikelyVirtualByName("wsl"))
+        assertTrue(isLikelyVirtualByName("WSL"))
+    }
+
+    @Test
+    fun `macOS special interfaces detected as virtual by name`() {
+        assertTrue(isLikelyVirtualByName("awdl0"))
+        assertTrue(isLikelyVirtualByName("llw0"))
+        assertTrue(isLikelyVirtualByName("bridge0"))
+        assertTrue(isLikelyVirtualByName("anpi0"))
+    }
+
+    @Test
+    fun `libvirt bridge detected as virtual by name`() {
+        assertTrue(isLikelyVirtualByName("virbr0"))
+    }
+
+    @Test
+    fun `Hamachi VPN detected as virtual by name`() {
+        assertTrue(isLikelyVirtualByName("ham0"))
+    }
+
+    @Test
+    fun `physical interfaces not detected as virtual by name`() {
+        assertFalse(isLikelyVirtualByName("eth0"))
+        assertFalse(isLikelyVirtualByName("eth1"))
+        assertFalse(isLikelyVirtualByName("en0"))
+        assertFalse(isLikelyVirtualByName("en1"))
+        assertFalse(isLikelyVirtualByName("wlan0"))
+        assertFalse(isLikelyVirtualByName("wlp3s0"))
+        assertFalse(isLikelyVirtualByName("enp0s3"))
+        assertFalse(isLikelyVirtualByName("Ethernet"))
+        assertFalse(isLikelyVirtualByName("Wi-Fi"))
+    }
+
+    // ===== MAC-based detection tests =====
+
+    @Test
+    fun `VMware MAC addresses detected as virtual`() {
+        assertTrue(isLikelyVirtualByMac("00:50:56:c0:00:08"))
+        assertTrue(isLikelyVirtualByMac("00:0c:29:ab:cd:ef"))
+        assertTrue(isLikelyVirtualByMac("00:05:69:12:34:56"))
+    }
+
+    @Test
+    fun `VirtualBox MAC addresses detected as virtual`() {
+        assertTrue(isLikelyVirtualByMac("08:00:27:ab:cd:ef"))
+    }
+
+    @Test
+    fun `Hyper-V MAC addresses detected as virtual`() {
+        assertTrue(isLikelyVirtualByMac("00:15:5d:ab:cd:ef"))
+    }
+
+    @Test
+    fun `Docker MAC addresses detected as virtual`() {
+        assertTrue(isLikelyVirtualByMac("02:42:ac:11:00:02"))
+    }
+
+    @Test
+    fun `QEMU KVM MAC addresses detected as virtual`() {
+        assertTrue(isLikelyVirtualByMac("52:54:00:ab:cd:ef"))
+    }
+
+    @Test
+    fun `Xen MAC addresses detected as virtual`() {
+        assertTrue(isLikelyVirtualByMac("00:16:3e:ab:cd:ef"))
+    }
+
+    @Test
+    fun `common physical MAC addresses not detected as virtual`() {
+        assertFalse(isLikelyVirtualByMac("d4:5d:64:ab:cd:ef")) // Intel
+        assertFalse(isLikelyVirtualByMac("3c:22:fb:ab:cd:ef")) // Apple
+        assertFalse(isLikelyVirtualByMac("a4:83:e7:ab:cd:ef")) // Realtek
+        assertFalse(isLikelyVirtualByMac("00:1a:2b:3c:4d:5e")) // Generic
+    }
+
+    @Test
+    fun `MAC detection is case-insensitive`() {
+        assertTrue(isLikelyVirtualByMac("00:50:56:C0:00:08"))
+        assertTrue(isLikelyVirtualByMac("08:00:27:AB:CD:EF"))
+    }
+
+    // ===== Combined detection tests =====
+
+    @Test
+    fun `isLikelyVirtual detects by name alone`() {
+        assertTrue(isLikelyVirtual("vmnet1", null))
+        assertTrue(isLikelyVirtual("docker0", null))
+    }
+
+    @Test
+    fun `isLikelyVirtual detects by MAC alone`() {
+        assertTrue(isLikelyVirtual("unknown0", "00:50:56:c0:00:08"))
+        assertTrue(isLikelyVirtual("Ethernet 2", "08:00:27:ab:cd:ef"))
+    }
+
+    @Test
+    fun `isLikelyVirtual detects by either name or MAC`() {
+        assertTrue(isLikelyVirtual("vmnet1", "00:50:56:c0:00:08"))
+        assertTrue(isLikelyVirtual("vmnet1", "d4:5d:64:ab:cd:ef"))
+        assertTrue(isLikelyVirtual("eth0", "00:50:56:c0:00:08"))
+    }
+
+    @Test
+    fun `isLikelyVirtual returns false for physical interface`() {
+        assertFalse(isLikelyVirtual("eth0", "d4:5d:64:ab:cd:ef"))
+        assertFalse(isLikelyVirtual("en0", "3c:22:fb:ab:cd:ef"))
+        assertFalse(isLikelyVirtual("wlan0", null))
+    }
+}
+
+class NetworkInterfaceSortingTest {
+
+    private val service = TestNetworkInterfaceService()
+
+    private fun sort(addresses: List<NetworkInterfaceInfo>): List<NetworkInterfaceInfo> =
+        service.testSortAddresses(addresses)
+
+    @Test
+    fun `physical interfaces sorted before virtual interfaces`() {
+        val physical = NetworkInterfaceInfo("eth0", 24, "192.168.1.100", isLikelyVirtual = false)
+        val virtual = NetworkInterfaceInfo("vmnet8", 24, "192.168.200.1", isLikelyVirtual = true)
+
+        val sorted = sort(listOf(virtual, physical))
+
+        assertEquals("eth0", sorted[0].name)
+        assertEquals("vmnet8", sorted[1].name)
+    }
+
+    @Test
+    fun `virtual interface with better subnet still sorted after physical`() {
+        val physical = NetworkInterfaceInfo("eth0", 16, "10.0.0.50", isLikelyVirtual = false)
+        val virtual = NetworkInterfaceInfo("vmnet8", 24, "192.168.200.100", isLikelyVirtual = true)
+
+        val sorted = sort(listOf(virtual, physical))
+
+        assertEquals("eth0", sorted[0].name)
+        assertEquals("vmnet8", sorted[1].name)
+    }
+
+    @Test
+    fun `among known LAN interfaces subnet preference then octet decides`() {
+        val eth0 = NetworkInterfaceInfo("eth0", 24, "192.168.1.50", isLikelyVirtual = false)
+        val en0 = NetworkInterfaceInfo("en0", 24, "192.168.1.100", isLikelyVirtual = false)
+        val wlan0 = NetworkInterfaceInfo("wlan0", 16, "10.0.0.200", isLikelyVirtual = false)
+
+        val sorted = sort(listOf(wlan0, en0, eth0))
+
+        // All three are known-LAN (tier 0), index 0. eth0/en0 are on 192.168.x (subnet
+        // rank 0), wlan0 on 10.x (subnet rank 2) -> wlan0 last. eth0 vs en0: same subnet
+        // and prefix, en0 has higher last octet -> en0 first.
+        assertEquals("en0", sorted[0].name)
+        assertEquals("eth0", sorted[1].name)
+        assertEquals("wlan0", sorted[2].name)
+    }
+
+    @Test
+    fun `among virtual interfaces lower index wins`() {
+        val vmnet1 = NetworkInterfaceInfo("vmnet1", 24, "192.168.100.1", isLikelyVirtual = true)
+        val docker0 = NetworkInterfaceInfo("docker0", 16, "172.17.0.1", isLikelyVirtual = true)
+
+        val sorted = sort(listOf(vmnet1, docker0))
+
+        // Both virtual (tier 2); index decides first: docker0 (0) before vmnet1 (1).
+        assertEquals("docker0", sorted[0].name)
+        assertEquals("vmnet1", sorted[1].name)
+    }
+
+    @Test
+    fun `mixed scenario with multiple physical and virtual interfaces`() {
+        val interfaces =
+            listOf(
+                NetworkInterfaceInfo("vmnet8", 24, "192.168.200.1", isLikelyVirtual = true),
+                NetworkInterfaceInfo("eth0", 24, "192.168.1.100", isLikelyVirtual = false),
+                NetworkInterfaceInfo("docker0", 16, "172.17.0.1", isLikelyVirtual = true),
+                NetworkInterfaceInfo("en0", 24, "192.168.1.50", isLikelyVirtual = false),
+                NetworkInterfaceInfo("vboxnet0", 24, "192.168.56.1", isLikelyVirtual = true),
+            )
+
+        val sorted = sort(interfaces)
+
+        // Physical first: eth0 (last octet 100) > en0 (last octet 50)
+        assertFalse(sorted[0].isLikelyVirtual)
+        assertFalse(sorted[1].isLikelyVirtual)
+        assertEquals("eth0", sorted[0].name)
+        assertEquals("en0", sorted[1].name)
+
+        // Virtual after: all /24 virtual by octet, then /16
+        assertTrue(sorted[2].isLikelyVirtual)
+        assertTrue(sorted[3].isLikelyVirtual)
+        assertTrue(sorted[4].isLikelyVirtual)
+    }
+
+    @Test
+    fun `all virtual interfaces still returns a result`() {
+        val interfaces =
+            listOf(
+                NetworkInterfaceInfo("vmnet8", 24, "192.168.200.1", isLikelyVirtual = true),
+                NetworkInterfaceInfo("docker0", 16, "172.17.0.1", isLikelyVirtual = true),
+            )
+
+        val sorted = sort(interfaces)
+
+        assertEquals(2, sorted.size)
+        // Both virtual; index decides: docker0 (0) before vmnet8 (8).
+        assertEquals("docker0", sorted[0].name)
+    }
+
+    @Test
+    fun `single physical interface selected over multiple virtual`() {
+        val interfaces =
+            listOf(
+                NetworkInterfaceInfo("vmnet1", 24, "192.168.100.1", isLikelyVirtual = true),
+                NetworkInterfaceInfo("vmnet8", 24, "192.168.200.1", isLikelyVirtual = true),
+                NetworkInterfaceInfo("docker0", 16, "172.17.0.1", isLikelyVirtual = true),
+                NetworkInterfaceInfo("wlan0", 24, "192.168.1.50", isLikelyVirtual = false),
+            )
+
+        val sorted = sort(interfaces)
+
+        assertEquals("wlan0", sorted[0].name)
+        assertFalse(sorted[0].isLikelyVirtual)
+    }
+
+    @Test
+    fun `wifi preferred over cellular - issue 4567`() {
+        // Real-world report: rmnet_data4 (cellular, /30) was selected over wlan0 (/24),
+        // making the device undiscoverable on the LAN.
+        val rmnet = NetworkInterfaceInfo("rmnet_data4", 30, "10.123.45.6", isLikelyVirtual = false)
+        val wlan0 = NetworkInterfaceInfo("wlan0", 24, "192.168.1.50", isLikelyVirtual = false)
+
+        val sorted = sort(listOf(rmnet, wlan0))
+
+        assertEquals("wlan0", sorted[0].name)
+        assertEquals("rmnet_data4", sorted[1].name)
+    }
+
+    @Test
+    fun `ethernet preferred over cellular even with longer prefix`() {
+        val eth0 = NetworkInterfaceInfo("eth0", 24, "192.168.1.50", isLikelyVirtual = false)
+        val rmnet = NetworkInterfaceInfo("rmnet0", 32, "10.8.0.2", isLikelyVirtual = false)
+
+        val sorted = sort(listOf(rmnet, eth0))
+
+        assertEquals("eth0", sorted[0].name)
+    }
+
+    @Test
+    fun `cellular ranked last behind unknown and virtual interfaces`() {
+        val rmnet = NetworkInterfaceInfo("rmnet_data4", 30, "10.123.45.6", isLikelyVirtual = false)
+        val unknown = NetworkInterfaceInfo("ppp0", 24, "192.168.5.2", isLikelyVirtual = false)
+        val virtual = NetworkInterfaceInfo("vmnet8", 24, "192.168.200.1", isLikelyVirtual = true)
+
+        val sorted = sort(listOf(rmnet, virtual, unknown))
+
+        // unknown physical (tier 1) < virtual (tier 2) < cellular (tier 3)
+        assertEquals("ppp0", sorted[0].name)
+        assertEquals("vmnet8", sorted[1].name)
+        assertEquals("rmnet_data4", sorted[2].name)
+    }
+
+    @Test
+    fun `lower interface index preferred - eth0 before eth1`() {
+        val eth1 = NetworkInterfaceInfo("eth1", 24, "192.168.1.100", isLikelyVirtual = false)
+        val eth0 = NetworkInterfaceInfo("eth0", 24, "192.168.1.50", isLikelyVirtual = false)
+
+        val sorted = sort(listOf(eth1, eth0))
+
+        // Index decides before subnet/octet: eth0 wins despite lower last octet.
+        assertEquals("eth0", sorted[0].name)
+        assertEquals("eth1", sorted[1].name)
+    }
+
+    @Test
+    fun `eth0 and wlan0 share type and index priority - address decides`() {
+        // eth0 and wlan0 are both known-LAN (tier 0) with index 0, so neither name wins;
+        // the same subnet/prefix here means the higher last octet decides deterministically.
+        val eth0 = NetworkInterfaceInfo("eth0", 24, "192.168.1.10", isLikelyVirtual = false)
+        val wlan0 = NetworkInterfaceInfo("wlan0", 24, "192.168.1.20", isLikelyVirtual = false)
+
+        val sortedA = sort(listOf(eth0, wlan0))
+        val sortedB = sort(listOf(wlan0, eth0))
+
+        // Order is independent of input order and driven by the address tiebreaker.
+        assertEquals("wlan0", sortedA[0].name)
+        assertEquals("wlan0", sortedB[0].name)
+    }
+
+    @Test
+    fun `192_168 subnet preferred over 10 subnet for same interface type`() {
+        val wlanHome = NetworkInterfaceInfo("wlan0", 24, "192.168.1.50", isLikelyVirtual = false)
+        val ethCorp = NetworkInterfaceInfo("eth1", 24, "10.20.30.40", isLikelyVirtual = false)
+
+        // Different index (0 vs 1) would normally favor index 0 anyway; use same index to
+        // isolate the subnet rule.
+        val wlanTen = NetworkInterfaceInfo("wlan0", 24, "10.0.0.50", isLikelyVirtual = false)
+        val ethHome = NetworkInterfaceInfo("eth0", 24, "192.168.1.60", isLikelyVirtual = false)
+
+        assertEquals("wlan0", sort(listOf(ethCorp, wlanHome)).first().name)
+        // Same type and index: 192.168 (eth0) beats 10.x (wlan0).
+        assertEquals("eth0", sort(listOf(wlanTen, ethHome)).first().name)
+    }
+
+    @Test
+    fun `systemd predictable wifi name treated as known LAN`() {
+        val wlp = NetworkInterfaceInfo("wlp2s0", 24, "192.168.1.50", isLikelyVirtual = false)
+        val rmnet = NetworkInterfaceInfo("rmnet_data4", 30, "10.123.45.6", isLikelyVirtual = false)
+
+        val sorted = sort(listOf(rmnet, wlp))
+
+        assertEquals("wlp2s0", sorted[0].name)
+    }
+
+    @Test
+    fun `systemd predictable name index is not parsed from bus numbers`() {
+        // enp0s3's trailing "3" is a PCI slot number, NOT an interface index. It must
+        // default to index 0 so it is not pushed behind eth0; the address decides instead.
+        val enp = NetworkInterfaceInfo("enp0s3", 24, "192.168.1.90", isLikelyVirtual = false)
+        val eth0 = NetworkInterfaceInfo("eth0", 24, "192.168.1.10", isLikelyVirtual = false)
+
+        val sorted = sort(listOf(eth0, enp))
+
+        // Both index 0 -> same subnet/prefix -> higher last octet wins (enp0s3 = 90).
+        assertEquals("enp0s3", sorted[0].name)
+        assertEquals("eth0", sorted[1].name)
+    }
+
+    @Test
+    fun `systemd names with embedded digits ordered by address not bus numbers`() {
+        // enp3s0 and wlp2s0 have digits embedded mid-name (bus/slot), so both default to
+        // index 0 instead of 3/2; the address tiebreaker decides, not the bus numbers.
+        val enp3s0 = NetworkInterfaceInfo("enp3s0", 24, "192.168.1.80", isLikelyVirtual = false)
+        val wlp2s0 = NetworkInterfaceInfo("wlp2s0", 24, "192.168.1.40", isLikelyVirtual = false)
+
+        val sorted = sort(listOf(wlp2s0, enp3s0))
+
+        // Both index 0 -> enp3s0 has higher last octet -> enp3s0 first.
+        assertEquals("enp3s0", sorted[0].name)
+    }
+
+    @Test
+    fun `empty list returns empty`() {
+        assertEquals(emptyList(), sort(emptyList()))
+    }
+
+    @Test
+    fun `Windows scenario - Ethernet adapter with VMware and Hyper-V adapters`() {
+        val interfaces =
+            listOf(
+                NetworkInterfaceInfo("vEthernet", 24, "172.28.0.1", isLikelyVirtual = true),
+                NetworkInterfaceInfo("vmnet1", 24, "192.168.80.1", isLikelyVirtual = true),
+                NetworkInterfaceInfo("vmnet8", 24, "192.168.200.1", isLikelyVirtual = true),
+                NetworkInterfaceInfo("eth3", 24, "192.168.1.105", isLikelyVirtual = false),
+            )
+
+        val sorted = sort(interfaces)
+
+        assertEquals("eth3", sorted[0].name)
+        assertFalse(sorted[0].isLikelyVirtual)
+    }
+}

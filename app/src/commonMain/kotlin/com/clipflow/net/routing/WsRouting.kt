@@ -1,0 +1,225 @@
+package com.clipflow.net.routing
+
+import com.clipflow.app.AppInfo
+import com.clipflow.net.SyncApi
+import com.clipflow.net.ws.WS_AUTHENTICATION_TIMEOUT
+import com.clipflow.net.ws.WsAuthChallenge
+import com.clipflow.net.ws.WsAuthProof
+import com.clipflow.net.ws.WsAuthenticationCodec
+import com.clipflow.net.ws.WsAuthenticationContext
+import com.clipflow.net.ws.WsCapability
+import com.clipflow.net.ws.WsEnvelope
+import com.clipflow.net.ws.WsMessageHandler
+import com.clipflow.net.ws.WsMessageType
+import com.clipflow.net.ws.WsServerAuthentication
+import com.clipflow.net.ws.WsSession
+import com.clipflow.net.ws.WsSessionManager
+import com.clipflow.net.ws.dispatchWsSessionMessages
+import com.clipflow.net.ws.receiveWsEnvelope
+import com.clipflow.secure.SecureStore
+import com.clipflow.utils.getCodecsUtils
+import com.clipflow.utils.getJsonUtils
+import dev.whyoleg.cryptography.random.CryptographyRandom
+import io.github.oshai.kotlinlogging.KotlinLogging
+import io.ktor.server.plugins.*
+import io.ktor.server.routing.*
+import io.ktor.server.websocket.*
+import io.ktor.websocket.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
+
+fun Routing.wsRouting(
+    appInfo: AppInfo,
+    secureStore: SecureStore,
+    wsSessionManager: WsSessionManager,
+    wsMessageHandler: WsMessageHandler,
+) {
+    val logger = KotlinLogging.logger {}
+
+    webSocket("/ws/sync") {
+        val appInstanceId = call.request.queryParameters["appInstanceId"]
+        val targetAppInstanceId = call.request.queryParameters["targetAppInstanceId"]
+
+        if (appInstanceId == null || targetAppInstanceId == null) {
+            close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Missing appInstanceId or targetAppInstanceId"))
+            return@webSocket
+        }
+
+        if (targetAppInstanceId != appInfo.appInstanceId) {
+            close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "targetAppInstanceId mismatch"))
+            return@webSocket
+        }
+
+        if (!secureStore.existCryptPublicKey(appInstanceId)) {
+            logger.warn { "WS connection rejected: $appInstanceId not paired" }
+            close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Not paired"))
+            return@webSocket
+        }
+
+        if (!wsSessionManager.isAcceptingSessions()) {
+            logger.info { "WS connection rejected: $appInstanceId while session manager paused" }
+            close(CloseReason(CloseReason.Codes.GOING_AWAY, "Session manager paused"))
+            return@webSocket
+        }
+
+        val authenticationRequested =
+            call.request.queryParameters["authVersion"] == WsAuthenticationCodec.VERSION.toString()
+        val serverAuthentication =
+            if (authenticationRequested) {
+                authenticateWebSocketPeer(appInfo, appInstanceId, secureStore) ?: return@webSocket
+            } else {
+                val remoteAddress = runCatching { call.request.origin.remoteAddress }.getOrNull()
+                if (!isLoopbackAddress(remoteAddress)) {
+                    // Deliberately loud: a peer landing here dials without authVersion
+                    // (e.g. an outdated extension) and would otherwise disappear without
+                    // a trace — the peer's own onopen already fired, so it believes it
+                    // is connected while we never register the session.
+                    logger.warn {
+                        "WS connection rejected: $appInstanceId from $remoteAddress " +
+                            "requires authenticated WebSocket (authVersion missing)"
+                    }
+                    close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Authenticated WebSocket required"))
+                    return@webSocket
+                }
+                logger.warn { "Allowing legacy unauthenticated WebSocket from loopback for $appInstanceId" }
+                null
+            }
+        val authenticationContext = serverAuthentication?.context
+
+        logger.info { "WebSocket connected: $appInstanceId → ${appInfo.appInstanceId}" }
+        val wsSession =
+            WsSession(
+                this,
+                appInstanceId,
+                authenticationContext,
+                peerSupportsChunkedPayload =
+                    SyncApi.supportsPairingV3(serverAuthentication?.remotePairingVersion),
+                peerCapabilities = serverAuthentication?.remoteCapabilities.orEmpty(),
+            )
+        if (!wsSessionManager.registerSession(appInstanceId, wsSession)) {
+            return@webSocket
+        }
+
+        dispatchWsSessionMessages(
+            appInstanceId = appInstanceId,
+            wsSession = wsSession,
+            wsMessageHandler = wsMessageHandler,
+            onReadLoopFinished = {
+                logger.info { "WebSocket disconnected: $appInstanceId" }
+                wsSessionManager.notifySessionClosed(appInstanceId, wsSession)
+            },
+        ) { dispatch ->
+            receiveWebSocketMessages(
+                appInstanceId = appInstanceId,
+                authenticationContext = authenticationContext,
+                onFrameReceived = wsSession::recordInboundActivity,
+                dispatch = dispatch,
+            )
+        }
+    }
+}
+
+private suspend fun DefaultWebSocketServerSession.authenticateWebSocketPeer(
+    appInfo: AppInfo,
+    appInstanceId: String,
+    secureStore: SecureStore,
+): WsServerAuthentication? {
+    val json = getJsonUtils().JSON
+    val processor = runCatching { secureStore.getMessageProcessor(appInstanceId) }.getOrNull()
+    if (processor == null) {
+        close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "WebSocket authentication unavailable"))
+        return null
+    }
+    val rawSession = WsSession(this, appInstanceId)
+    val challenge =
+        WsAuthChallenge(
+            sessionId = getCodecsUtils().base64Encode(CryptographyRandom.nextBytes(16)),
+            nonce = CryptographyRandom.nextBytes(32),
+            pairingVersion = appInfo.pairingVersion,
+            capabilities = WsCapability.supported,
+        )
+    rawSession.sendEnvelope(
+        WsEnvelope(
+            type = WsMessageType.AUTH_CHALLENGE,
+            payload = json.encodeToString(challenge).encodeToByteArray(),
+        ),
+    )
+    val proof =
+        runCatching {
+            withTimeoutOrNull(WS_AUTHENTICATION_TIMEOUT) { receiveWsEnvelope(incoming) }
+                ?.takeIf { it.envelope.type == WsMessageType.AUTH_PROOF }
+                ?.let { json.decodeFromString<WsAuthProof>(it.envelope.payload.decodeToString()) }
+        }.getOrNull()
+    val proofPayload =
+        WsAuthenticationCodec.handshakePayload(
+            role = WsAuthenticationCodec.CLIENT_PROOF,
+            sourceAppInstanceId = appInstanceId,
+            targetAppInstanceId = appInfo.appInstanceId,
+            challenge = challenge,
+        )
+    if (proof == null || !processor.verifyAuthentication(proofPayload, proof.authenticationCode)) {
+        close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "WebSocket authentication failed"))
+        return null
+    }
+
+    val ackPayload =
+        WsAuthenticationCodec.handshakePayload(
+            role = WsAuthenticationCodec.SERVER_PROOF,
+            sourceAppInstanceId = appInfo.appInstanceId,
+            targetAppInstanceId = appInstanceId,
+            challenge = challenge,
+        )
+    val ack = WsAuthProof(processor.authenticationCode(ackPayload))
+    rawSession.sendEnvelope(
+        WsEnvelope(
+            type = WsMessageType.AUTH_ACK,
+            payload = json.encodeToString(ack).encodeToByteArray(),
+        ),
+    )
+    return WsServerAuthentication(
+        context =
+            WsAuthenticationContext(
+                sessionId = challenge.sessionId,
+                localAppInstanceId = appInfo.appInstanceId,
+                remoteAppInstanceId = appInstanceId,
+                processor = processor,
+            ),
+        remotePairingVersion = proof.pairingVersion,
+        remoteCapabilities = proof.capabilities,
+    )
+}
+
+private suspend fun DefaultWebSocketServerSession.receiveWebSocketMessages(
+    appInstanceId: String,
+    authenticationContext: WsAuthenticationContext?,
+    onFrameReceived: () -> Unit,
+    dispatch: suspend (WsEnvelope) -> Unit,
+) {
+    val logger = KotlinLogging.logger {}
+    while (true) {
+        val receivedResult = runCatching { receiveWsEnvelope(incoming, onFrameReceived = onFrameReceived) }
+        val receiveFailure = receivedResult.exceptionOrNull()
+        if (receiveFailure != null) {
+            if (receiveFailure is CancellationException) throw receiveFailure
+            if (authenticationContext != null) {
+                logger.warn { "Rejected malformed authenticated WS message from $appInstanceId" }
+                close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Malformed authenticated message"))
+                break
+            }
+            logger.error(receiveFailure) { "Failed to handle legacy WS message from $appInstanceId" }
+            continue
+        }
+        val received = receivedResult.getOrNull() ?: break
+        if (authenticationContext != null &&
+            !authenticationContext.verify(received.header, received.envelope.payload)
+        ) {
+            logger.warn { "Rejected unauthenticated WS message from $appInstanceId" }
+            close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Invalid message authentication"))
+            break
+        }
+        dispatch(received.envelope)
+    }
+}
+
+internal fun isLoopbackAddress(address: String?): Boolean =
+    address == "127.0.0.1" || address == "::1" || address == "0:0:0:0:0:0:0:1"

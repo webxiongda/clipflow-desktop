@@ -4,12 +4,12 @@ val versionProperties = Properties()
 project.projectDir
     .toPath()
     .parent
-    .resolve("app/src/desktopMain/resources/crosspaste-version.properties")
+    .resolve("app/src/desktopMain/resources/clipflow-version.properties")
     .toFile()
     .reader()
     .use { versionProperties.load(it) }
 
-group = "com.crosspaste"
+group = "com.clipflow"
 version = versionProperties.getProperty("version")
 
 plugins {
@@ -70,8 +70,8 @@ configurations.all {
 
 tasks.register<JavaExec>("run") {
     group = "application"
-    description = "Run the CrossPaste e2e harness against a target device."
-    mainClass.set("com.crosspaste.e2e.cli.MainKt")
+    description = "Run the ClipFlow e2e harness against a target device."
+    mainClass.set("com.clipflow.e2e.cli.MainKt")
     val desktopMain =
         kotlin.targets
             .getByName("desktop")

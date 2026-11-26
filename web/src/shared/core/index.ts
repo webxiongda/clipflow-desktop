@@ -4,23 +4,23 @@
  */
 
 import {
-  CrossPasteJson as KtJson,
-  CrossPasteHash as KtHash,
-  CrossPasteCrypto as KtCrypto,
+  ClipFlowJson as KtJson,
+  ClipFlowHash as KtHash,
+  ClipFlowCrypto as KtCrypto,
   createPairingV3Initiator as ktCreatePairingV3Initiator,
   createSecureMessageProcessor as ktCreateSecureMessageProcessor,
   JsPairingV3Initiator,
   JsSecureMessageProcessor,
-} from "@crosspaste/core";
+} from "@clipflow/core";
 
 /** JSON parsing utilities */
-export const CrossPasteJson = KtJson.getInstance();
+export const ClipFlowJson = KtJson.getInstance();
 
 /** Hashing utilities (MurmurHash3, Base64) */
-export const CrossPasteHash = KtHash.getInstance();
+export const ClipFlowHash = KtHash.getInstance();
 
 /** Crypto utilities — all async (WebCrypto backend) */
-export const CrossPasteCrypto = KtCrypto.getInstance();
+export const ClipFlowCrypto = KtCrypto.getInstance();
 
 /**
  * Pairing v3 (SPAKE2 + PIN) initiator session. One instance per pairing

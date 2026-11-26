@@ -1,0 +1,129 @@
+package com.clipflow.headless
+
+import com.clipflow.config.CommonConfigManager
+import com.clipflow.paste.PasteData
+import com.clipflow.paste.PasteReleaseService
+import com.clipflow.paste.PasteWriteScope
+import com.clipflow.paste.PasteboardService
+import com.clipflow.paste.item.PasteItem
+import com.clipflow.utils.ioDispatcher
+import com.clipflow.utils.namedScope
+import io.github.oshai.kotlinlogging.KLogger
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
+
+class HeadlessPasteboardService(
+    override val configManager: CommonConfigManager,
+    override val pasteReleaseService: PasteReleaseService,
+) : PasteboardService {
+
+    override val logger: KLogger = KotlinLogging.logger {}
+
+    override var owner: Boolean = false
+
+    override val remotePasteboardChannel: Channel<suspend () -> Result<Unit?>> = Channel(Channel.CONFLATED)
+
+    override val serviceScope: CoroutineScope = namedScope(ioDispatcher, "HeadlessPasteboardService")
+
+    override fun start() {
+        logger.info { "Headless pasteboard service started (no clipboard monitoring)" }
+        startRemotePasteboardListener()
+    }
+
+    override fun stop() {
+        logger.info { "Headless pasteboard service stopped" }
+    }
+
+    override fun toggle() {
+        val enablePasteboardListening = configManager.getCurrentConfig().enablePasteboardListening
+        if (enablePasteboardListening) {
+            stop()
+        } else {
+            start()
+        }
+        configManager.updateConfig("enablePasteboardListening", !enablePasteboardListening)
+    }
+
+    override suspend fun tryWritePasteboard(
+        id: Long?,
+        pasteItem: PasteItem,
+        localOnly: Boolean,
+        updateCreateTime: Boolean,
+    ): Result<Unit?> =
+        runCatching {
+            logger.info { "Headless mode: paste item stored to DB only (no system clipboard)" }
+        }
+
+    override suspend fun tryWritePasteboard(
+        pasteData: PasteData,
+        localOnly: Boolean,
+        scope: PasteWriteScope,
+        updateCreateTime: Boolean,
+    ): Result<Unit?> =
+        runCatching {
+            logger.info { "Headless mode: paste data stored to DB only (no system clipboard)" }
+        }
+
+    override suspend fun tryWriteRemotePasteboard(pasteData: PasteData): Result<Unit?> =
+        tryWriteRemotePasteboard(pasteData, emptySet())
+
+    override suspend fun tryWriteRemotePasteboard(
+        pasteData: PasteData,
+        seenAppInstanceIds: Set<String>,
+    ): Result<Unit?> =
+        pasteReleaseService.releaseRemotePasteData(
+            pasteData,
+            seenAppInstanceIds,
+            tryWritePasteboard = ::enqueueRemotePaste,
+        )
+
+    private fun enqueueRemotePaste(it: PasteData) {
+        remotePasteboardChannel.trySend {
+            tryWritePasteboard(pasteData = it, localOnly = true)
+        }
+    }
+
+    override suspend fun tryWriteRemotePasteboardList(
+        pasteDataList: List<PasteData>,
+        writeToPasteboard: Boolean,
+    ): Result<Unit?> =
+        pasteReleaseService.releaseRemotePasteDataList(pasteDataList, historyPull = true) {
+            pasteReleaseService.releaseRemotePasteData(
+                it,
+                writePasteboard = writeToPasteboard,
+                historyPull = true,
+            ) { paste ->
+                if (writeToPasteboard) enqueueRemotePaste(paste)
+            }
+        }
+
+    override suspend fun tryWriteRemotePasteboardWithFile(pasteId: Long): Result<Unit?> =
+        tryWriteRemotePasteboardWithFile(pasteId, emptySet(), writeToPasteboard = true)
+
+    override suspend fun tryWriteRemotePasteboardWithFile(
+        pasteId: Long,
+        seenAppInstanceIds: Set<String>,
+    ): Result<Unit?> = tryWriteRemotePasteboardWithFile(pasteId, seenAppInstanceIds, writeToPasteboard = true)
+
+    override suspend fun tryWriteRemotePasteboardWithFile(
+        pasteId: Long,
+        seenAppInstanceIds: Set<String>,
+        writeToPasteboard: Boolean,
+    ): Result<Unit?> =
+        tryWriteRemotePasteboardWithFile(pasteId, seenAppInstanceIds, writeToPasteboard, historyPull = false)
+
+    override suspend fun tryWriteRemotePasteboardWithFile(
+        pasteId: Long,
+        seenAppInstanceIds: Set<String>,
+        writeToPasteboard: Boolean,
+        historyPull: Boolean,
+    ): Result<Unit?> =
+        pasteReleaseService.releaseRemotePasteDataWithFile(pasteId, seenAppInstanceIds, historyPull) {
+            if (writeToPasteboard) {
+                remotePasteboardChannel.trySend {
+                    tryWritePasteboard(pasteData = it, localOnly = true)
+                }
+            }
+        }
+}

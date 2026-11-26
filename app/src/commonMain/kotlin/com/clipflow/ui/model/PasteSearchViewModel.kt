@@ -1,0 +1,161 @@
+package com.clipflow.ui.model
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.clipflow.paste.PasteData
+import com.clipflow.paste.PasteTag
+import com.clipflow.utils.getDateUtils
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.launch
+import kotlin.concurrent.Volatile
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+
+abstract class PasteSearchViewModel : ViewModel() {
+
+    companion object {
+        const val QUERY_BATCH_SIZE = 50
+        const val LOAD_MORE_THROTTLE_MS = 500L
+    }
+
+    private val _inputSearch = MutableStateFlow("")
+
+    val inputSearch: StateFlow<String> = _inputSearch.asStateFlow()
+
+    private val _searchBaseParams =
+        MutableStateFlow(
+            SearchBaseParams(
+                pasteTypeList = listOf(),
+                tag = null,
+                limit = QUERY_BATCH_SIZE,
+            ),
+        )
+
+    val searchBaseParams: StateFlow<SearchBaseParams> = _searchBaseParams.asStateFlow()
+
+    private val _loadAll = MutableStateFlow(false)
+
+    val loadAll: StateFlow<Boolean> = _loadAll.asStateFlow()
+
+    abstract val convertTerm: (String) -> List<String>
+
+    @Volatile
+    private var lastLoadTime = 0L
+    private var pendingLoadJob: Job? = null
+
+    private val dateUtils = getDateUtils()
+
+    // Only typing is debounced: clearing the input (including resetSearch on window open) must
+    // apply at once, otherwise the empty box shows the previous query's results and Enter pastes
+    // its first row.
+    @OptIn(FlowPreview::class)
+    val searchParams =
+        combine(
+            _inputSearch.debounce { if (it.isEmpty()) Duration.ZERO else 500.milliseconds },
+            _searchBaseParams,
+        ) { inputSearch, searchBaseParams ->
+            val searchTerms = convertTerm(inputSearch)
+
+            SearchParams(
+                searchTerms = searchTerms,
+                pasteTypeList = searchBaseParams.pasteTypeList,
+                tag = searchBaseParams.tag,
+                limit = searchBaseParams.limit,
+            )
+        }
+
+    abstract val tagList: StateFlow<List<PasteTag>>
+
+    abstract val searchResults: StateFlow<List<PasteData>>
+
+    fun updateInputSearch(input: String) {
+        _inputSearch.value = input
+        pendingLoadJob?.cancel()
+        _searchBaseParams.value =
+            _searchBaseParams.value.copy(
+                limit = QUERY_BATCH_SIZE,
+            )
+        _loadAll.value = false
+    }
+
+    fun updatePasteType(pasteTypeList: List<Int>) {
+        pendingLoadJob?.cancel()
+        _searchBaseParams.value =
+            _searchBaseParams.value.copy(
+                pasteTypeList = pasteTypeList,
+                limit = QUERY_BATCH_SIZE,
+            )
+        _loadAll.value = false
+    }
+
+    fun updateTag(tag: Long?) {
+        pendingLoadJob?.cancel()
+        _searchBaseParams.value =
+            if (_searchBaseParams.value.tag != tag) {
+                _searchBaseParams.value.copy(
+                    tag = tag,
+                    limit = QUERY_BATCH_SIZE,
+                )
+            } else {
+                _searchBaseParams.value.copy(
+                    tag = null,
+                    limit = QUERY_BATCH_SIZE,
+                )
+            }
+        _loadAll.value = false
+    }
+
+    /** Drops the tag filter once the selected tag no longer exists, so no invisible filter remains. */
+    protected fun clearMissingTag(tags: List<PasteTag>) {
+        val tag = _searchBaseParams.value.tag ?: return
+        if (tags.none { it.id == tag }) {
+            updateTag(null)
+        }
+    }
+
+    fun tryAddLimit() {
+        if (_loadAll.value) return
+        if (pendingLoadJob?.isActive == true) return
+
+        pendingLoadJob =
+            viewModelScope.launch {
+                val elapsed = dateUtils.nowEpochMilliseconds() - lastLoadTime
+                if (elapsed < LOAD_MORE_THROTTLE_MS) {
+                    delay(LOAD_MORE_THROTTLE_MS - elapsed)
+                }
+
+                if (!_loadAll.value) {
+                    lastLoadTime = dateUtils.nowEpochMilliseconds()
+                    _searchBaseParams.value =
+                        _searchBaseParams.value.copy(
+                            limit = _searchBaseParams.value.limit + QUERY_BATCH_SIZE,
+                        )
+                }
+            }
+    }
+
+    fun checkLoadAll(size: Int) {
+        if (size < _searchBaseParams.value.limit) {
+            _loadAll.value = true
+        }
+    }
+
+    fun resetSearch() {
+        _inputSearch.value = ""
+        pendingLoadJob?.cancel()
+        _searchBaseParams.value =
+            _searchBaseParams.value.copy(
+                pasteTypeList = listOf(),
+                tag = null,
+                limit = QUERY_BATCH_SIZE,
+            )
+        _loadAll.value = false
+    }
+}

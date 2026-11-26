@@ -5,8 +5,8 @@ import { BlobStore } from "@/shared/storage/blob-store";
 import { SyncApi } from "@/shared/api/sync";
 import { PullApi } from "@/shared/api/pull";
 import {
-  CrossPasteHash,
-  CrossPasteJson,
+  ClipFlowHash,
+  ClipFlowJson,
   createPairingV3Initiator,
   type PairingV3Initiator,
 } from "@/shared/core";
@@ -250,7 +250,7 @@ async function pushPasteToDevices(pasteData: PasteData): Promise<void> {
 
   let normalizedPayload: Uint8Array;
   try {
-    const normalized = CrossPasteJson.parsePasteData(JSON.stringify(pasteData));
+    const normalized = ClipFlowJson.parsePasteData(JSON.stringify(pasteData));
     normalizedPayload = new TextEncoder().encode(normalized);
   } catch (e) {
     console.error("[WS] Failed to normalize pasteData for push:", e);
@@ -280,9 +280,9 @@ async function pollClipboard(): Promise<void> {
     const response = await chrome.runtime.sendMessage({ type: "READ_CLIPBOARD" });
     const collected = collectPasteItems(
       response,
-      CrossPasteHash.hashText,
+      ClipFlowHash.hashText,
       (bytes: Uint8Array) =>
-        CrossPasteHash.hashBytes(new Int8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)),
+        ClipFlowHash.hashBytes(new Int8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)),
     );
     if (!collected) return;
 
@@ -1238,8 +1238,8 @@ async function pairV3(attempt: ConnectingAttempt, token: number): Promise<void> 
       throw new Error("verification_failed");
     }
     await completePairing(attempt, {
-      signPublicKey: CrossPasteHash.base64Encode(v3.acceptorSignPublicKey()),
-      cryptPublicKey: CrossPasteHash.base64Encode(v3.acceptorCryptPublicKey()),
+      signPublicKey: ClipFlowHash.base64Encode(v3.acceptorSignPublicKey()),
+      cryptPublicKey: ClipFlowHash.base64Encode(v3.acceptorCryptPublicKey()),
     });
   } finally {
     attempt.finalizing = false;

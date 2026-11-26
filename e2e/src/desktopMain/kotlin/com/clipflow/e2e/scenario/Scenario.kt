@@ -1,0 +1,99 @@
+package com.clipflow.e2e.scenario
+
+import com.clipflow.dto.sync.SyncInfo
+import com.clipflow.e2e.peer.HeadlessPeer
+import com.clipflow.net.clientapi.ClientApiResult
+import com.clipflow.net.clientapi.ConnectionRefused
+import com.clipflow.net.clientapi.DecryptFail
+import com.clipflow.net.clientapi.EncryptFail
+import com.clipflow.net.clientapi.FailureResult
+import com.clipflow.net.clientapi.RequestTimeout
+import com.clipflow.net.clientapi.UnknownError
+import java.util.concurrent.atomic.AtomicReference
+
+sealed class ScenarioResult {
+    data class Pass(
+        val message: String = "",
+    ) : ScenarioResult()
+
+    data class Fail(
+        val reason: String,
+        val cause: Throwable? = null,
+    ) : ScenarioResult()
+}
+
+interface Scenario {
+    val name: String
+
+    suspend fun run(ctx: ScenarioContext): ScenarioResult
+}
+
+data class TargetSpec(
+    val host: String,
+    val port: Int,
+    val appInstanceId: String?,
+    val displayName: String? = null,
+    val pairingVersion: Int? = null,
+)
+
+/**
+ * Holds a discovered target across scenarios so the second-onwards run in a multi-scenario
+ * batch skips a redundant 1.5–10s mDNS round. AtomicReference + CAS keeps the cache
+ * coherent if scenarios are ever fanned out concurrently — first writer wins, later
+ * writes are dropped instead of clobbering.
+ */
+class TargetCache {
+    val resolved: AtomicReference<TargetSpec?> = AtomicReference(null)
+}
+
+data class ScenarioContext(
+    val peer: HeadlessPeer,
+    val target: TargetSpec?,
+    val targetAppInstanceId: String?,
+    val discoveryTimeoutMs: Long,
+    val tokenProvider: suspend () -> Int,
+    val pinProvider: suspend () -> CharArray,
+    val allowLegacyPairing: Boolean = true,
+    val targetCache: TargetCache = TargetCache(),
+)
+
+/**
+ * Resolve a target connection from either an explicit [ScenarioContext.target] or by
+ * walking [discovered] for a matching appInstanceId. Returns null if no match.
+ */
+fun resolveTarget(
+    ctx: ScenarioContext,
+    discovered: List<SyncInfo>,
+): TargetSpec? {
+    ctx.target?.let { return it }
+    val match =
+        when (val id = ctx.targetAppInstanceId) {
+            null -> discovered.firstOrNull()
+            else -> discovered.firstOrNull { it.appInfo.appInstanceId == id }
+        } ?: return null
+    val host =
+        match.endpointInfo.hostInfoList
+            .firstOrNull()
+            ?.hostAddress ?: return null
+    return TargetSpec(
+        host = host,
+        port = match.endpointInfo.port,
+        appInstanceId = match.appInfo.appInstanceId,
+        displayName = match.appInfo.userName,
+        pairingVersion = match.appInfo.pairingVersion,
+    )
+}
+
+fun describeFailure(result: ClientApiResult): String =
+    when (result) {
+        is FailureResult ->
+            "FailureResult(code=${result.exception.getErrorCode().code}, " +
+                "name=${result.exception.getErrorCode().name}, " +
+                "message='${result.exception.message ?: ""}')"
+        is ConnectionRefused -> "ConnectionRefused"
+        is EncryptFail -> "EncryptFail"
+        is DecryptFail -> "DecryptFail"
+        is RequestTimeout -> "RequestTimeout"
+        is UnknownError -> "UnknownError"
+        else -> result::class.simpleName ?: result.toString()
+    }

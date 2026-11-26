@@ -4,9 +4,9 @@ outline: deep
 
 # Command-Line Interface
 
-CrossPaste ships with a command-line client that talks to the CrossPaste application running on the same machine — the desktop app, or the [headless daemon](#headless-daemon-linux-servers) on a server without a graphical session. Use it to copy, paste, search, and manage your pasteboard history from the terminal and from shell scripts.
+ClipFlow ships with a command-line client that talks to the ClipFlow application running on the same machine — the desktop app, or the [headless daemon](#headless-daemon-linux-servers) on a server without a graphical session. Use it to copy, paste, search, and manage your pasteboard history from the terminal and from shell scripts.
 
-The CLI is a thin client: every command goes through the local CrossPaste application (over a Unix domain socket), so the terminal always sees the same history, tags, and devices as the UI, and text copied from the CLI syncs to your other devices like any other paste.
+The CLI is a thin client: every command goes through the local ClipFlow application (over a Unix domain socket), so the terminal always sees the same history, tags, and devices as the UI, and text copied from the CLI syncs to your other devices like any other paste.
 
 ## Installation
 
@@ -14,12 +14,12 @@ The CLI binary is bundled with every desktop package. What differs per platform 
 
 | Platform | Terminal command | PATH setup |
 |---|---|---|
-| macOS | `crosspaste` | On first launch the app offers to install the command; you can also install or repair it any time from **Extensions → Command Line** in the app. This creates a `/usr/local/bin/crosspaste` symlink. |
-| Windows (installer / Microsoft Store) | `crosspaste` | Automatic. The package registers `crosspaste` and `crosspaste-cli` execution aliases; both run the CLI (`crosspaste-cli` is kept for scripts written against older versions). |
-| Linux (deb / rpm) | `crosspaste` | Automatic. The package installs a `/usr/bin/crosspaste` symlink. |
-| Linux (tarball) | `crosspaste` | Manual: link `<install-dir>/lib/app/bin/crosspaste-cli` into your `PATH`, e.g. `sudo ln -s <install-dir>/lib/app/bin/crosspaste-cli /usr/local/bin/crosspaste`. |
-| Windows (zip) | `crosspaste-cli` | Manual: add the extracted `app\bin\` directory to your `PATH` (the binary is named `crosspaste-cli.exe` there). |
-| Linux (AppImage) | — | The binary is bundled at `bin/crosspaste-cli` inside the image, but the mount path changes on every run, so a stable symlink is not possible. Prefer the deb, rpm or tarball if you want the CLI. |
+| macOS | `clipflow` | On first launch the app offers to install the command; you can also install or repair it any time from **Extensions → Command Line** in the app. This creates a `/usr/local/bin/clipflow` symlink. |
+| Windows (installer / Microsoft Store) | `clipflow` | Automatic. The package registers `clipflow` and `clipflow-cli` execution aliases; both run the CLI (`clipflow-cli` is kept for scripts written against older versions). |
+| Linux (deb / rpm) | `clipflow` | Automatic. The package installs a `/usr/bin/clipflow` symlink. |
+| Linux (tarball) | `clipflow` | Manual: link `<install-dir>/lib/app/bin/clipflow-cli` into your `PATH`, e.g. `sudo ln -s <install-dir>/lib/app/bin/clipflow-cli /usr/local/bin/clipflow`. |
+| Windows (zip) | `clipflow-cli` | Manual: add the extracted `app\bin\` directory to your `PATH` (the binary is named `clipflow-cli.exe` there). |
+| Linux (AppImage) | — | The binary is bundled at `bin/clipflow-cli` inside the image, but the mount path changes on every run, so a stable symlink is not possible. Prefer the deb, rpm or tarball if you want the CLI. |
 
 ## Commands
 
@@ -28,8 +28,8 @@ The CLI binary is bundled with every desktop package. What differs per platform 
 | `status` | Show whether the app is running, plus version, device and paste counts. Never auto-starts the app. |
 | `paste [id]` | Show the most recent paste, or a specific paste by ID. Image pastes render inline in terminals that support it (iTerm2, WezTerm, Kitty, Ghostty) and always list their stored file paths. |
 | `history [query]` | List recent paste history, or search it when query words are given. Filters mirror the search window: `--type` (repeat for several), `--tag`, `--sort newest\|oldest`, plus `--limit` and `--format`. |
-| `pick [query]` | Full-screen interactive picker: type to fuzzy-filter, ↑/↓ to select, Enter copies the selected paste (any type) via CrossPaste. Ctrl-E edits it in `$EDITOR`; Ctrl-T/Ctrl-G open a type/tag selector bar where ←/→ choose a value live; Ctrl-S toggles the sort order; Tab toggles a preview panel (image pastes render their first image inline, size-capped, on iTerm2/WezTerm/Kitty/Ghostty); `?` shows help; Esc cancels (exit code 130). |
-| `copy [text]` | Copy text via CrossPaste: stores it in history and syncs it to your devices; the system clipboard is set when the desktop app (not the headless daemon) is running. Reads stdin when piped. |
+| `pick [query]` | Full-screen interactive picker: type to fuzzy-filter, ↑/↓ to select, Enter copies the selected paste (any type) via ClipFlow. Ctrl-E edits it in `$EDITOR`; Ctrl-T/Ctrl-G open a type/tag selector bar where ←/→ choose a value live; Ctrl-S toggles the sort order; Tab toggles a preview panel (image pastes render their first image inline, size-capped, on iTerm2/WezTerm/Kitty/Ghostty); `?` shows help; Esc cancels (exit code 130). |
+| `copy [text]` | Copy text via ClipFlow: stores it in history and syncs it to your devices; the system clipboard is set when the desktop app (not the headless daemon) is running. Reads stdin when piped. |
 | `edit [id]` | Open the most recent paste (or a specific paste by ID) in `$VISUAL`/`$EDITOR` and update it in place: the paste keeps its ID, type, and tags. HTML/RTF edit their source markup and stay HTML/RTF, links edit the URL, colors edit the `#RRGGBBAA` value. Saving without changes updates nothing. Like editing inside the app, the change is not re-synced to devices that already received the original. |
 | `delete <id>` | Delete a paste by ID. |
 | `devices` | List paired devices and their connection state. |
@@ -50,7 +50,7 @@ Global options:
 - `--json` — machine-readable JSON output for any command.
 - `--start` / `--no-start` — when the app is not running, launch it without asking / never launch it. The default is to ask on an interactive terminal, and to fail fast with exit code 3 otherwise (a script is never blocked waiting for input).
 
-Run `crosspaste --help` or `crosspaste <command> --help` for the full reference.
+Run `clipflow --help` or `clipflow <command> --help` for the full reference.
 
 ## Piping and scripting
 
@@ -59,53 +59,53 @@ The CLI is built to compose with other tools. Prompts and progress messages go t
 Copy from a pipe — when input is piped and no command is given, the CLI behaves as `copy`, so the command name can be dropped entirely:
 
 ```sh
-git log -1 --format=%H | crosspaste
-cat notes.md | crosspaste
-history | grep test | crosspaste copy   # the explicit form works the same
+git log -1 --format=%H | clipflow
+cat notes.md | clipflow
+history | grep test | clipflow copy   # the explicit form works the same
 ```
 
 Print only the paste content (no decoration), for piping onward. `--raw` reproduces the content exactly as stored — HTML/RTF pastes print their source markup; `--summary` prints the plain-text rendering instead:
 
 ```sh
-crosspaste paste --raw | pbcopy
-crosspaste paste --raw --no-newline > snippet.html
-crosspaste paste --summary            # HTML/RTF converted to plain text
+clipflow paste --raw | pbcopy
+clipflow paste --raw --no-newline > snippet.html
+clipflow paste --summary            # HTML/RTF converted to plain text
 ```
 
 For an image paste, `--raw` dumps the stored image bytes, so a screenshot copied on any device can be piped straight into a file or another tool. This works for single-image pastes; a paste containing several images fails with the list of stored file paths instead:
 
 ```sh
-crosspaste paste --raw > screenshot.png
-crosspaste paste --raw | magick - -resize 50% small.png
+clipflow paste --raw > screenshot.png
+clipflow paste --raw | magick - -resize 50% small.png
 ```
 
-On Windows, redirect through cmd — `cmd /c "crosspaste paste --raw > shot.png"` — or use PowerShell 7.4+. Windows PowerShell 5.1's `>` re-encodes native command output as UTF-16 text and corrupts binary data.
+On Windows, redirect through cmd — `cmd /c "clipflow paste --raw > shot.png"` — or use PowerShell 7.4+. Windows PowerShell 5.1's `>` re-encodes native command output as UTF-16 text and corrupts binary data.
 
 List and bulk-process history:
 
 ```sh
 # One paste ID per line — combine with xargs
-crosspaste history --format id | xargs -n1 crosspaste delete
+clipflow history --format id | xargs -n1 clipflow delete
 
 # Search with filters — query words need no quotes
-crosspaste history TODO --type text --sort oldest
+clipflow history TODO --type text --sort oldest
 
 # JSON output — combine with jq
-crosspaste history TODO --format json | jq '.items[].preview'
+clipflow history TODO --format json | jq '.items[].preview'
 ```
 
-React to new pastes as they arrive — `watch` streams every new entry (a copy on this machine, a `crosspaste copy`, or an entry synced from another device) and runs until interrupted. Existing history is not replayed; the stream starts at "now". The default output is one sanitized line per paste (its text content; for links, the URL). It is a live feed, not a durable queue — events that arrive while the CLI is not running are not delivered later:
+React to new pastes as they arrive — `watch` streams every new entry (a copy on this machine, a `clipflow copy`, or an entry synced from another device) and runs until interrupted. Existing history is not replayed; the stream starts at "now". The default output is one sanitized line per paste (its text content; for links, the URL). It is a live feed, not a durable queue — events that arrive while the CLI is not running are not delivered later:
 
 ```sh
 # Download every video link copied on any of your devices
-crosspaste watch --type link | xargs -n1 yt-dlp
+clipflow watch --type link | xargs -n1 yt-dlp
 
 # Full metadata as one JSON object per line
-crosspaste watch --format json | jq '.preview'
+clipflow watch --format json | jq '.preview'
 
 # Exact bytes: take IDs from the stream and fetch each paste raw
-crosspaste watch --format id | while read -r id; do
-  crosspaste paste "$id" --raw > "paste-$id.txt"
+clipflow watch --format id | while read -r id; do
+  clipflow paste "$id" --raw > "paste-$id.txt"
 done
 ```
 
@@ -118,46 +118,46 @@ Scripts can rely on:
 | 0 | Success |
 | 1 | Error (request failed, paste not found, ...) |
 | 2 | Usage error (unknown option, missing argument, ...) |
-| 3 | CrossPaste is not running (or still starting) |
+| 3 | ClipFlow is not running (or still starting) |
 
-For example, `crosspaste status` (which never auto-starts the app) makes a convenient health check:
+For example, `clipflow status` (which never auto-starts the app) makes a convenient health check:
 
 ```sh
-if ! crosspaste status > /dev/null; then
-  echo "CrossPaste is not ready"
+if ! clipflow status > /dev/null; then
+  echo "ClipFlow is not ready"
 fi
 ```
 
 ## Pairing from the terminal
 
-`crosspaste pair` pairs this machine with another CrossPaste device without touching the UI — the flow every other sync feature builds on:
+`clipflow pair` pairs this machine with another ClipFlow device without touching the UI — the flow every other sync feature builds on:
 
 1. The command lists nearby unpaired devices discovered on the local network (plus devices that are already known but not yet trusted). Pick one by number, or skip the list with `--target <app-instance-id>`.
-2. The target device displays a 6-digit code — in the app UI on desktop and mobile, or via `crosspaste token` when the target runs the headless daemon. Confirm on that device if it asks.
+2. The target device displays a 6-digit code — in the app UI on desktop and mobile, or via `clipflow token` when the target runs the headless daemon. Confirm on that device if it asks.
 3. Type the code in the terminal (input is hidden). On success the two devices trust each other and start syncing.
 
 Pairing is a human confirmation by design, so `pair` requires an interactive terminal — piping input into it is a usage error. You get up to 5 code attempts per session; on normal exit the CLI cancels an in-progress session, and a session orphaned by an interrupt (Ctrl-C) is reclaimed by a server-side timeout.
 
-If the device list comes up empty, make sure CrossPaste is running on the other device, both machines are on the same network, and multicast/mDNS traffic is not blocked by a firewall.
+If the device list comes up empty, make sure ClipFlow is running on the other device, both machines are on the same network, and multicast/mDNS traffic is not blocked by a firewall.
 
 ### Pairing with a headless daemon
 
-When the device being paired *with* has no screen — it runs the headless daemon — its pairing code is shown by `crosspaste token` on that machine instead of a dialog:
+When the device being paired *with* has no screen — it runs the headless daemon — its pairing code is shown by `clipflow token` on that machine instead of a dialog:
 
 ```sh
 # On the daemon machine (e.g. over SSH), before or during pairing:
-crosspaste token --wait
+clipflow token --wait
 
 # On the other machine, start pairing as usual (terminal or app UI),
 # then type the code the daemon machine printed.
-crosspaste pair
+clipflow pair
 ```
 
-The code goes to stdout on its own line (`CODE=$(crosspaste token)` works in scripts); all explanatory text goes to stderr. Without `--wait` the command reports the code only if a pairing attempt is already in progress, and exits with code 1 otherwise.
+The code goes to stdout on its own line (`CODE=$(clipflow token)` works in scripts); all explanatory text goes to stderr. Without `--wait` the command reports the code only if a pairing attempt is already in progress, and exits with code 1 otherwise.
 
 ## Headless daemon (Linux servers)
 
-CrossPaste also runs on machines without a graphical session — a Linux server over SSH, for example. It is the same application started in headless mode (`--headless`): full sync engine, paste history database, and CLI endpoint, but no window and no system-clipboard access. `crosspaste copy` on such a machine adds the content straight to history and syncs it to your paired devices; `crosspaste paste --raw` fetches what you copied elsewhere.
+ClipFlow also runs on machines without a graphical session — a Linux server over SSH, for example. It is the same application started in headless mode (`--headless`): full sync engine, paste history database, and CLI endpoint, but no window and no system-clipboard access. `clipflow copy` on such a machine adds the content straight to history and syncs it to your paired devices; `clipflow paste --raw` fetches what you copied elsewhere.
 
 Headless mode is auto-detected: on a machine with no `DISPLAY`/`WAYLAND_DISPLAY` the app enters it even without the flag.
 
@@ -168,13 +168,13 @@ There are two mutually exclusive ways to run the daemon: let the CLI launch it o
 For the on-demand path: install the deb (or unpack the tarball) as described in [Installation](#installation), then run any command that needs the daemon (`status` is the one exception — it never auto-starts):
 
 ```sh
-crosspaste history
+clipflow history
 ```
 
 When the daemon is not running, the CLI offers to start it (or use `--start` to skip the question; scripts get exit code 3 instead of a prompt). Then pair with your other devices:
 
 ```sh
-crosspaste pair
+clipflow pair
 ```
 
 The GUI and the daemon are one peer: they share the same data directory and single-instance lock, so exactly one of them runs per user at a time.
@@ -186,18 +186,18 @@ For a server you want the daemon supervised and started at boot. The daemon is p
 If a CLI-launched (unmanaged) daemon is already running, stop it **before** enabling the unit — the two are the same single-instance daemon, so each systemd start attempt would otherwise die against the instance lock and `Restart=on-failure` would keep retrying:
 
 ```sh
-kill "$(cat ~/.local/share/.crosspaste/crosspaste.pid)"   # graceful shutdown (SIGTERM)
+kill "$(cat ~/.local/share/.clipflow/clipflow.pid)"   # graceful shutdown (SIGTERM)
 ```
 
-Create `~/.config/systemd/user/crosspaste.service`:
+Create `~/.config/systemd/user/clipflow.service`:
 
 ```ini
 [Unit]
-Description=CrossPaste headless daemon
+Description=ClipFlow headless daemon
 
 [Service]
-# deb install path; for a tarball use <install-dir>/bin/crosspaste
-ExecStart=/usr/lib/crosspaste/bin/crosspaste --headless
+# deb install path; for a tarball use <install-dir>/bin/clipflow
+ExecStart=/usr/lib/clipflow/bin/clipflow --headless
 Restart=on-failure
 
 [Install]
@@ -208,27 +208,27 @@ Enable it, and allow it to run while you are not logged in:
 
 ```sh
 systemctl --user daemon-reload
-systemctl --user enable --now crosspaste
+systemctl --user enable --now clipflow
 sudo loginctl enable-linger "$USER"   # start at boot, keep running after logout
 ```
 
-There is deliberately no `daemon start/stop` CLI subcommand: `systemctl --user stop crosspaste` (or plain SIGTERM) shuts the daemon down gracefully, and `crosspaste status` reports whether it is running.
+There is deliberately no `daemon start/stop` CLI subcommand: `systemctl --user stop clipflow` (or plain SIGTERM) shuts the daemon down gracefully, and `clipflow status` reports whether it is running.
 
-Once systemd owns the daemon, keep it that way: if the unit is stopped and a CLI command offers to start CrossPaste, decline (or run with `--no-start`) and use `systemctl --user start crosspaste` instead, so the daemon stays supervised.
+Once systemd owns the daemon, keep it that way: if the unit is stopped and a CLI command offers to start ClipFlow, decline (or run with `--no-start`) and use `systemctl --user start clipflow` instead, so the daemon stays supervised.
 
 ### macOS (launchd)
 
-A headless macOS machine is rare, but the equivalent is a LaunchAgent. Only use this on a Mac where the desktop app never runs: the app and the daemon are one peer sharing a single-instance lock, so with the GUI running launchd would keep restarting the daemon into that lock. Create `~/Library/LaunchAgents/com.crosspaste.daemon.plist`:
+A headless macOS machine is rare, but the equivalent is a LaunchAgent. Only use this on a Mac where the desktop app never runs: the app and the daemon are one peer sharing a single-instance lock, so with the GUI running launchd would keep restarting the daemon into that lock. Create `~/Library/LaunchAgents/com.clipflow.daemon.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.crosspaste.daemon</string>
+  <key>Label</key><string>com.clipflow.daemon</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Applications/CrossPaste.app/Contents/MacOS/CrossPaste</string>
+    <string>/Applications/ClipFlow.app/Contents/MacOS/ClipFlow</string>
     <string>--headless</string>
   </array>
   <key>RunAtLoad</key><true/>
@@ -237,14 +237,14 @@ A headless macOS machine is rare, but the equivalent is a LaunchAgent. Only use 
 </plist>
 ```
 
-Then `launchctl load ~/Library/LaunchAgents/com.crosspaste.daemon.plist`.
+Then `launchctl load ~/Library/LaunchAgents/com.clipflow.daemon.plist`.
 
 ### Troubleshooting
 
-- `crosspaste status` shows whether the daemon is up; exit code 3 means not running.
-- Logs are written to `~/.local/share/.crosspaste/logs/` (on macOS: `~/Library/Application Support/CrossPaste/logs/`).
+- `clipflow status` shows whether the daemon is up; exit code 3 means not running.
+- Logs are written to `~/.local/share/.clipflow/logs/` (on macOS: `~/Library/Application Support/ClipFlow/logs/`).
 - A second instance refuses to start with an error on stderr and a non-zero exit — that includes trying to start the daemon while the desktop app is running (the GUI and the daemon are one peer per user).
-- Device discovery needs mDNS/multicast on the local network; if `crosspaste pair` finds nothing, check the firewall and that both machines share a network segment.
+- Device discovery needs mDNS/multicast on the local network; if `clipflow pair` finds nothing, check the firewall and that both machines share a network segment.
 
 ## Shell completion
 
@@ -252,13 +252,13 @@ The CLI can generate completion scripts for bash, zsh, and fish:
 
 ```sh
 # bash (~/.bashrc)
-source <(crosspaste --generate-completion bash)
+source <(clipflow --generate-completion bash)
 
 # zsh (~/.zshrc)
-source <(crosspaste --generate-completion zsh)
+source <(clipflow --generate-completion zsh)
 
 # fish
-crosspaste --generate-completion fish > ~/.config/fish/completions/crosspaste.fish
+clipflow --generate-completion fish > ~/.config/fish/completions/clipflow.fish
 ```
 
 ## Colors
@@ -277,13 +277,13 @@ To test the CLI against a development app instance without packaging a release b
 ./gradlew :cli:run --args="history -n 5"
 ```
 
-The `:cli:run` task links the host's debug executable and sets `CROSSPASTE_USER_DATA_DIR` to `app/.user`, so the CLI discovers the dev instance's `cli-endpoint.json` instead of the installed app's. An explicit `CROSSPASTE_USER_DATA_DIR` in your environment wins over the default, and the same variable also works when invoking a built CLI binary directly — useful for testing with a real TTY (colors, full terminal width):
+The `:cli:run` task links the host's debug executable and sets `CLIPFLOW_USER_DATA_DIR` to `app/.user`, so the CLI discovers the dev instance's `cli-endpoint.json` instead of the installed app's. An explicit `CLIPFLOW_USER_DATA_DIR` in your environment wins over the default, and the same variable also works when invoking a built CLI binary directly — useful for testing with a real TTY (colors, full terminal width):
 
 ```sh
-CROSSPASTE_USER_DATA_DIR=app/.user cli/build/bin/macosArm64/debugExecutable/crosspaste-cli.kexe history
+CLIPFLOW_USER_DATA_DIR=app/.user cli/build/bin/macosArm64/debugExecutable/clipflow-cli.kexe history
 ```
 
-A PATH-installed CLI also finds a dev instance on its own: the dev app writes a `cli-endpoint.dev.json` pointer into the installed app's default user-data directory, and the CLI falls back to it whenever the installed app is not live (a one-line note on stderr tells you a dev instance answered). A live installed app always wins; use `CROSSPASTE_USER_DATA_DIR` to force the dev instance while both are running.
+A PATH-installed CLI also finds a dev instance on its own: the dev app writes a `cli-endpoint.dev.json` pointer into the installed app's default user-data directory, and the CLI falls back to it whenever the installed app is not live (a one-line note on stderr tells you a dev instance answered). A live installed app always wins; use `CLIPFLOW_USER_DATA_DIR` to force the dev instance while both are running.
 
 Output through Gradle is not a TTY, so the CLI cannot detect your window size and falls back to 79 columns. Pass the width explicitly via `COLUMNS` (the CLI honors it whenever stdout is not interactive):
 

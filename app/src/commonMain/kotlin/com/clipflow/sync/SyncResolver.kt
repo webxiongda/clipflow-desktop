@@ -1,0 +1,859 @@
+package com.clipflow.sync
+
+import com.clipflow.app.AppInfo
+import com.clipflow.app.RatingPromptManager
+import com.clipflow.db.sync.HostInfo
+import com.clipflow.db.sync.SyncRuntimeInfo
+import com.clipflow.db.sync.SyncRuntimeInfoDao
+import com.clipflow.db.sync.SyncState
+import com.clipflow.dto.secure.KeyExchangeResponse
+import com.clipflow.exception.StandardErrorCode
+import com.clipflow.net.NetworkInterfaceService
+import com.clipflow.net.PasteBonjourService
+import com.clipflow.net.SyncInfoFactory
+import com.clipflow.net.TelnetHelper
+import com.clipflow.net.VersionRelation
+import com.clipflow.net.clientapi.DecryptFail
+import com.clipflow.net.clientapi.EncryptFail
+import com.clipflow.net.clientapi.FailureResult
+import com.clipflow.net.clientapi.SuccessResult
+import com.clipflow.net.clientapi.SyncClientApi
+import com.clipflow.net.filter
+import com.clipflow.net.ws.WsClientConnector
+import com.clipflow.net.ws.WsConnectionPolicy
+import com.clipflow.net.ws.WsSessionManager
+import com.clipflow.platform.Platform
+import com.clipflow.secure.SecureKeyPairSerializer
+import com.clipflow.secure.SecureStore
+import com.clipflow.utils.CryptographyUtils
+import com.clipflow.utils.DateUtils.nowEpochMilliseconds
+import com.clipflow.utils.HostAndPort
+import com.clipflow.utils.StripedMutex
+import com.clipflow.utils.buildUrl
+import io.github.oshai.kotlinlogging.KotlinLogging
+import io.ktor.util.collections.ConcurrentMap
+import kotlin.coroutines.cancellation.CancellationException
+
+class SyncResolver(
+    private val appInfo: AppInfo,
+    private val localPlatform: Platform,
+    private val lazyPasteBonjourService: Lazy<PasteBonjourService>,
+    private val networkInterfaceService: NetworkInterfaceService,
+    private val pendingExchangeLedger: PendingExchangeLedger,
+    private val ratingPromptManager: RatingPromptManager,
+    private val secureKeyPairSerializer: SecureKeyPairSerializer,
+    private val secureStore: SecureStore,
+    private val syncClientApi: SyncClientApi,
+    private val syncDeviceManager: SyncDeviceManager,
+    private val syncInfoFactory: SyncInfoFactory,
+    private val syncRuntimeInfoDao: SyncRuntimeInfoDao,
+    private val telnetHelper: TelnetHelper,
+    private val tokenCache: TokenCacheApi,
+    private val wsClientConnector: WsClientConnector,
+    private val wsSessionManager: WsSessionManager,
+) : SyncResolverApi {
+
+    private val logger = KotlinLogging.logger {}
+
+    private val deviceMutex = StripedMutex()
+
+    // Last subnet-matched address set we advertised to each peer over the liveness heartbeat,
+    // keyed by appInstanceId. We piggyback our address onto the heartbeat so a peer learns our
+    // (possibly changed) return address without waiting for the next mDNS round (#4509), but
+    // only when it actually changed — re-posting every cycle would re-run the peer's
+    // trustSyncInfo (a DB write) on every heartbeat. A real IP change recomputes a different
+    // list, so the next heartbeat re-advertises; any non-success drops the entry so a
+    // reconnect re-advertises too. Cleared on MarkExit/RemoveDevice so a gracefully-departed
+    // device leaves nothing behind (no heartbeat would ever come to evict it otherwise).
+    private val lastHeartbeatAdvertised: MutableMap<String, List<HostInfo>> = ConcurrentMap()
+
+    private fun SyncEvent.appInstanceId(): String =
+        when (this) {
+            is SyncEvent.SyncRunTimeInfoEvent -> syncRuntimeInfo.appInstanceId
+            is SyncEvent.RefreshSyncInfo -> appInstanceId
+            else -> error("Unknown SyncEvent type: $this")
+        }
+
+    override suspend fun emitEvent(event: SyncEvent) {
+        logger.debug { "Event: $event" }
+        deviceMutex.withLock(event.appInstanceId()) {
+            processEvent(event)
+        }
+    }
+
+    private suspend fun processEvent(event: SyncEvent) {
+        try {
+            if (event is SyncEvent.SyncRunTimeInfoEvent) {
+                // Re-read from DB to avoid stale snapshots.
+                // Events are queued in a SharedFlow and may be processed after the DB has changed.
+                val syncRuntimeInfo =
+                    syncRuntimeInfoDao.getSyncRuntimeInfo(event.syncRuntimeInfo.appInstanceId)
+                        ?: return
+
+                when (event) {
+                    is SyncEvent.Resolve -> {
+                        // Settle the polling backoff once per pass, from where the pass
+                        // landed: a peer still unreachable retries on the short exponential
+                        // schedule; CONNECTED is reset by the handler's state-change path,
+                        // and INCOMPATIBLE/UNVERIFIED wait on the user, so they keep the
+                        // default interval. Non-polling callbacks pass a no-op.
+                        if (syncRuntimeInfo.resolve(event.callback) == SyncState.DISCONNECTED) {
+                            event.callback.markPollFailure()
+                        }
+                    }
+
+                    is SyncEvent.ForceResolve -> {
+                        syncRuntimeInfo.forceResolve(event.callback)
+                    }
+
+                    is SyncEvent.TrustByBearerToken -> {
+                        syncRuntimeInfo.trustByBearerToken(event.token, event.callback)
+                    }
+
+                    is SyncEvent.TrustBySasCode -> {
+                        syncRuntimeInfo.trustBySasCode(event.code, event.callback)
+                    }
+
+                    is SyncEvent.UpdateAllowSend -> {
+                        syncDeviceManager.updateAllowSend(syncRuntimeInfo, event.allowSend)
+                    }
+
+                    is SyncEvent.UpdateAllowReceive -> {
+                        syncDeviceManager.updateAllowReceive(syncRuntimeInfo, event.allowReceive)
+                    }
+
+                    is SyncEvent.UpdateNoteName -> {
+                        syncDeviceManager.updateNoteName(syncRuntimeInfo, event.noteName)
+                    }
+
+                    is SyncEvent.ExchangeKeysForPairing -> {
+                        syncDeviceManager.exchangeKeysForPairing(syncRuntimeInfo, event.generation)
+                    }
+
+                    is SyncEvent.CancelPairing -> {
+                        syncDeviceManager.cancelPairing(syncRuntimeInfo, event.generation)
+                    }
+
+                    is SyncEvent.ShowToken -> {
+                        syncDeviceManager.showToken(syncRuntimeInfo)
+                    }
+
+                    is SyncEvent.ShowPairingCode -> {
+                        event.completionSignal.complete(
+                            syncDeviceManager.showPairingCode(syncRuntimeInfo),
+                        )
+                    }
+
+                    is SyncEvent.NotifyExit -> {
+                        syncDeviceManager.notifyExit(syncRuntimeInfo)
+                        event.completionSignal.complete(Unit)
+                    }
+
+                    is SyncEvent.MarkExit -> {
+                        syncDeviceManager.markExit(syncRuntimeInfo)
+                        // No more heartbeats will come to clear this on failure; drop it now
+                        // so the entry can't linger after a graceful exit (a reconnect starts
+                        // with an empty marker and re-advertises, which is what we want).
+                        lastHeartbeatAdvertised.remove(syncRuntimeInfo.appInstanceId)
+                    }
+
+                    is SyncEvent.RemoveDevice -> {
+                        syncDeviceManager.removeDevice(syncRuntimeInfo)
+                        lastHeartbeatAdvertised.remove(syncRuntimeInfo.appInstanceId)
+                    }
+                }
+            } else {
+                when (event) {
+                    is SyncEvent.RefreshSyncInfo -> {
+                        refreshSyncInfo(event.appInstanceId, event.hostInfoList)
+                    }
+
+                    else -> {
+                        logger.warn { "unknown event $event" }
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            // Never swallow cancellation — rethrow so structured concurrency
+            // can tear down the resolve pipeline instead of re-processing
+            // buffered events in a cancelled scope (which previously produced
+            // an unbounded "Failed to process event" loop on shutdown/teardown).
+            throw e
+        } catch (e: Throwable) {
+            logger.error(e) { "Failed to process event: $event" }
+        } finally {
+            if (event is SyncEvent.CallbackEvent) {
+                event.callback.onComplete()
+            }
+            if (event is SyncEvent.ShowPairingCode) {
+                event.completionSignal.complete(ShowPairingCodeResult.UNAVAILABLE)
+            }
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Unified resolution: dispatches by current state, completes the
+    // full discover → authenticate flow in a single pass to avoid
+    // unnecessary intermediate state persistence and event round-trips.
+    // ──────────────────────────────────────────────────────────────
+
+    /** Returns the connect state this pass left the device in. */
+    private suspend fun SyncRuntimeInfo.resolve(callback: ResolveCallback): Int {
+        // Per-poll entry trace: debug only. At INFO we log just the state transitions
+        // (connected / disconnected / incompatible / …), so steady-state polling stays quiet.
+        logger.debug { "Resolve $appInstanceId (state=$connectState)" }
+
+        // Extensions (e.g. Chrome) are client-only: they connect TO us via WebSocket
+        // and have no server to telnet/heartbeat back to. Use WebSocket liveness instead.
+        if (platform.isExtension()) {
+            return resolveExtension(callback)
+        }
+
+        return when (connectState) {
+            SyncState.DISCONNECTED,
+            SyncState.INCOMPATIBLE,
+            -> {
+                discoverAndConnect(callback)
+            }
+
+            SyncState.CONNECTING,
+            SyncState.UNMATCHED,
+            -> {
+                connectHostAddress?.let { host ->
+                    authenticate(host, connectNetworkPrefixLength, callback)
+                } ?: discoverAndConnect(callback)
+            }
+
+            SyncState.UNVERIFIED -> {
+                resolveUnverified(callback)
+            }
+
+            SyncState.CONNECTED -> {
+                verifyConnection(callback)
+            }
+
+            else -> connectState
+        }
+    }
+
+    /**
+     * Resolve extension devices (e.g. Chrome Extension).
+     * Extensions are client-only — they have no server, no host, no port.
+     * Liveness is verified by sending an in-band Frame.Ping; send failure
+     * means the underlying socket is dead.
+     */
+    private suspend fun SyncRuntimeInfo.resolveExtension(callback: ResolveCallback): Int =
+        when (connectState) {
+            SyncState.CONNECTED -> {
+                if (!wsSessionManager.probe(appInstanceId)) {
+                    logger.info { "Extension $appInstanceId probe failed, marking DISCONNECTED" }
+                    updateConnectState(SyncState.DISCONNECTED)
+                } else {
+                    // probe success → stay CONNECTED
+                    connectState
+                }
+            }
+            SyncState.DISCONNECTED -> {
+                if (wsSessionManager.probe(appInstanceId)) {
+                    logger.info { "Extension $appInstanceId WebSocket back, marking CONNECTED" }
+                    callback.updateVersionRelation(VersionRelation.EQUAL_TO)
+                    updateConnectState(SyncState.CONNECTED)
+                } else {
+                    // WS still gone (or half-open)
+                    connectState
+                }
+            }
+            else -> {
+                logger.warn { "Extension $appInstanceId in unexpected state=$connectState" }
+                connectState
+            }
+        }
+
+    /**
+     * Phase 1: Discover a reachable host and attempt full connection
+     * in one pass (telnet + heartbeat without an event round-trip).
+     *
+     * Uses a fast-then-slow strategy: if a previously connected address
+     * exists, try it first with a short timeout. On failure, fall back
+     * to probing the full address list with a longer timeout.
+     */
+    private suspend fun SyncRuntimeInfo.discoverAndConnect(callback: ResolveCallback): Int {
+        // Gate discovery when the machine has no usable local interface (cold-start
+        // before the network is up, sleep/wake, cable pulled). Every telnet would fail
+        // with UnresolvedAddressException, and the per-poll "no reachable host" line
+        // turns into a log storm (#4509 / #4499: 700+ lines in one offline session).
+        // Skip probing entirely and stay DISCONNECTED; the NetworkStateMonitor re-emits
+        // interfaces the moment connectivity returns, and the next poll resolves cleanly.
+        if (networkInterfaceService.getCurrentUseNetworkInterfaces().isEmpty()) {
+            logger.debug { "$appInstanceId offline (no local interface), skipping discovery" }
+            if (connectState != SyncState.DISCONNECTED) {
+                updateConnectState(SyncState.DISCONNECTED)
+            }
+            return SyncState.DISCONNECTED
+        }
+
+        val result =
+            discoverReachableHost() ?: run {
+                // Log + persist only on the transition into DISCONNECTED. Re-writing
+                // DISCONNECTED every poll bumps modifyTime, re-emits the DB flow, and
+                // churns the handler; re-logging it floods the log. Kept at INFO (not
+                // debug) so a user's default-level logs still capture when and why a peer
+                // went unreachable — connection issues get reported far more often than
+                // anyone will re-run with debug enabled, and the connection layer is new
+                // enough that losing this signal would hurt triage.
+                if (connectState != SyncState.DISCONNECTED) {
+                    logger.info { "$appInstanceId no reachable host, hostInfoList: $hostInfoList" }
+                    updateConnectState(SyncState.DISCONNECTED)
+                }
+                return SyncState.DISCONNECTED
+            }
+
+        val (hostInfo, versionRelation) = result
+        callback.updateVersionRelation(versionRelation)
+
+        if (versionRelation != VersionRelation.EQUAL_TO) {
+            // INCOMPATIBLE re-enters discoverAndConnect on every poll; log only on the
+            // transition into it so a version mismatch doesn't repeat the same line forever.
+            if (connectState != SyncState.INCOMPATIBLE) {
+                logger.info { "$appInstanceId version incompatible: $versionRelation" }
+            }
+            return updateConnectState(SyncState.INCOMPATIBLE, hostInfo.hostAddress, hostInfo.networkPrefixLength)
+        }
+
+        // Host found and version compatible — set CONNECTING for UI feedback
+        logger.info { "$appInstanceId ${hostInfo.hostAddress} to connecting" }
+        updateConnectState(SyncState.CONNECTING, hostInfo.hostAddress, hostInfo.networkPrefixLength)
+
+        // Immediately attempt authentication (no event round-trip)
+        return authenticate(hostInfo.hostAddress, hostInfo.networkPrefixLength, callback)
+    }
+
+    /**
+     * Phase 2: Attempt authentication via existing key or token cache.
+     * Called directly after discovery or when resuming from CONNECTING state.
+     */
+    private suspend fun SyncRuntimeInfo.authenticate(
+        host: String,
+        networkPrefixLength: Short?,
+        callback: ResolveCallback,
+    ): Int =
+        if (secureStore.existCryptPublicKey(appInstanceId)) {
+            val state = heartbeat(host, port, appInstanceId, callback)
+            when (state) {
+                SyncState.CONNECTED -> {
+                    logger.info { "heartbeat success $appInstanceId $host $port" }
+                    updateConnectState(SyncState.CONNECTED, host, networkPrefixLength)
+                    ratingPromptManager.trackSignificantAction()
+                    attemptWebSocketUpgrade(host, port)
+                    SyncState.CONNECTED
+                }
+
+                SyncState.UNMATCHED -> {
+                    logger.info { "heartbeat key mismatch $appInstanceId, re-authenticating" }
+                    secureStore.deleteCryptPublicKey(appInstanceId)
+                    tryTokenCacheOrUnverified(host, networkPrefixLength)
+                }
+
+                SyncState.INCOMPATIBLE -> {
+                    updateConnectState(SyncState.INCOMPATIBLE, host, networkPrefixLength)
+                }
+
+                else -> {
+                    // Persist DISCONNECTED at the address we actually tried, not the
+                    // stale snapshot's connectHostAddress. Reverting to the old address
+                    // here makes connectHostAddress oscillate (CONNECTING@new ->
+                    // DISCONNECTED@stale) within a single resolve pass, which the DB flow
+                    // reads as an address change and re-emits Resolve, bypassing backoff
+                    // (#4499 / #4500 tight loop).
+                    updateConnectState(SyncState.DISCONNECTED, host, networkPrefixLength)
+                }
+            }
+        } else {
+            logger.info { "$appInstanceId no public key, checking token cache" }
+            tryTokenCacheOrUnverified(host, networkPrefixLength)
+        }
+
+    /**
+     * Phase 3: Try QR-scan token cache first; fall back to UNVERIFIED
+     * so the user can manually enter a pairing code.
+     */
+    private suspend fun SyncRuntimeInfo.tryTokenCacheOrUnverified(
+        host: String,
+        networkPrefixLength: Short?,
+    ): Int =
+        if (trustByTokenCache()) {
+            logger.info { "trustByTokenCache success $host $port" }
+            ratingPromptManager.trackSignificantAction()
+            updateConnectState(SyncState.CONNECTED, host, networkPrefixLength)
+            attemptWebSocketUpgrade(host, port)
+            SyncState.CONNECTED
+        } else {
+            // Verify host is still reachable before showing UNVERIFIED to user
+            telnetHelper.telnet(host, port)?.versionRelation?.let { versionRelation ->
+                if (versionRelation == VersionRelation.EQUAL_TO) {
+                    logger.info { "$appInstanceId to unverified $host $port" }
+                    updateConnectState(SyncState.UNVERIFIED, host, networkPrefixLength)
+                } else {
+                    updateConnectState(SyncState.INCOMPATIBLE, host, networkPrefixLength)
+                }
+            } ?: updateConnectState(SyncState.DISCONNECTED)
+        }
+
+    /**
+     * Handle UNVERIFIED state during polling: check if a QR token arrived
+     * or if the host is still reachable.
+     */
+    private suspend fun SyncRuntimeInfo.resolveUnverified(callback: ResolveCallback): Int =
+        connectHostAddress?.let { host ->
+            // Pairing v3 persists the peer key outside the legacy resolver event path.
+            // A forced refresh then arrives while this row is still UNVERIFIED, so
+            // authenticate with the newly stored key before falling back to QR tokens.
+            if (secureStore.existCryptPublicKey(appInstanceId)) {
+                return authenticate(host, connectNetworkPrefixLength, callback)
+            }
+            // Check token cache first — user may have scanned QR while waiting
+            if (trustByTokenCache()) {
+                logger.info { "trustByTokenCache success (from unverified) $host $port" }
+                ratingPromptManager.trackSignificantAction()
+                updateConnectState(SyncState.CONNECTED, host, connectNetworkPrefixLength)
+                attemptWebSocketUpgrade(host, port)
+                return SyncState.CONNECTED
+            }
+            // Verify host still reachable; only update DB if state changes
+            telnetHelper.telnet(host, port)?.versionRelation?.let { versionRelation ->
+                callback.updateVersionRelation(versionRelation)
+                if (versionRelation != VersionRelation.EQUAL_TO) {
+                    updateConnectState(SyncState.INCOMPATIBLE, host, connectNetworkPrefixLength)
+                } else {
+                    // Still EQUAL_TO, stay UNVERIFIED — no DB write needed
+                    connectState
+                }
+            } ?: updateConnectState(SyncState.DISCONNECTED)
+        } ?: updateConnectState(SyncState.DISCONNECTED)
+
+    /**
+     * Verify an existing CONNECTED device is still healthy.
+     * If a WebSocket session is active, skip the HTTP heartbeat —
+     * the WebSocket ping/pong handles liveness.
+     */
+    private suspend fun SyncRuntimeInfo.verifyConnection(callback: ResolveCallback): Int {
+        if (wsSessionManager.isConnected(appInstanceId)) {
+            if (!wsSessionManager.supportsHeartbeatAck(appInstanceId) ||
+                wsSessionManager.probe(appInstanceId)
+            ) {
+                logger.debug { "WebSocket active for $appInstanceId, skipping HTTP heartbeat" }
+                return connectState
+            }
+            logger.info { "WebSocket heartbeat probe failed for $appInstanceId, falling back to HTTP verification" }
+        }
+        return connectHostAddress?.let { host ->
+            // Heartbeat the current address DIRECTLY — it need not be a member of
+            // hostInfoList. With Phase B's capacity cap, a still-alive connectHostAddress
+            // can be LRU-evicted from hostInfoList once the peer advertises newer ones;
+            // keeping liveness checks bound to the address (not list membership) is what
+            // makes that boundary safe. Do not change this to "only probe hostInfoList".
+            val state = heartbeat(host, port, appInstanceId, callback)
+            when (state) {
+                SyncState.CONNECTED -> {
+                    // Still connected over HTTP, but WebSocket is absent (e.g. mobile resume
+                    // after pause() closed sessions, or a transient WS drop). Opportunistically
+                    // re-upgrade so we do not stay degraded to HTTP polling.
+                    attemptWebSocketUpgrade(host, port)
+                    connectState
+                }
+
+                SyncState.UNMATCHED -> {
+                    logger.info { "connection key mismatch $appInstanceId, re-authenticating" }
+                    secureStore.deleteCryptPublicKey(appInstanceId)
+                    tryTokenCacheOrUnverified(host, connectNetworkPrefixLength)
+                }
+
+                SyncState.INCOMPATIBLE -> {
+                    updateConnectState(SyncState.INCOMPATIBLE, host, connectNetworkPrefixLength)
+                }
+
+                else -> {
+                    // Active switch (#4499 weakness ①): the current address is unreachable.
+                    // Instead of dropping to DISCONNECTED (a visible disconnect, then a
+                    // separate reconnect pass), re-discover among the peer's advertised
+                    // addresses in the same pass. An IP move resolves as
+                    // CONNECTED -> CONNECTING -> CONNECTED with no gap; if nothing is
+                    // reachable, discoverAndConnect persists DISCONNECTED itself.
+                    logger.info { "$appInstanceId heartbeat failed on $host, switching via discovery" }
+                    discoverAndConnect(callback)
+                }
+            }
+        } ?: discoverAndConnect(callback)
+    }
+
+    private suspend fun SyncRuntimeInfo.forceResolve(callback: ResolveCallback) {
+        logger.info { "Force resolve $appInstanceId" }
+        refreshSyncInfo(appInstanceId, hostInfoList)
+        resolve(callback)
+    }
+
+    /**
+     * Recency-first, fast-then-slow host discovery: probe the most-recently-advertised
+     * address first with a short timeout (the currently-connected address wins ties),
+     * then fall back to racing the full recency-ordered list with a longer timeout.
+     *
+     * Ordering by lastSeen means a peer that moved to a new IP is reached on the fresh
+     * address immediately, instead of wasting the fast timeout on a now-dead old one
+     * (#4499 weakness ②). switchHost admits only identity-matching (or identity-unknown)
+     * hosts so a ghost on a historical IP is never selected.
+     */
+    private suspend fun SyncRuntimeInfo.discoverReachableHost(): Pair<HostInfo, VersionRelation>? {
+        val ordered =
+            hostInfoList.sortedWith(
+                compareByDescending<HostInfo> { it.lastSeen }
+                    .thenByDescending { it.hostAddress == connectHostAddress },
+            )
+
+        // Fast path: probe the freshest address first (skipped when there are none).
+        ordered.firstOrNull()?.let { freshest ->
+            // Per-poll probe trace stays at debug; the conclusion (connecting / no reachable
+            // host) is logged at info by the caller, so dropping this loses nothing for triage.
+            logger.debug { "$appInstanceId fast probe ${freshest.hostAddress}:$port (lastSeen=${freshest.lastSeen})" }
+            telnetHelper.telnet(freshest.hostAddress, port, TelnetHelper.FAST_TIMEOUT)?.let { telnetResult ->
+                if (telnetResult.identityAccepted(appInstanceId)) {
+                    return@discoverReachableHost Pair(freshest, telnetResult.versionRelation)
+                }
+                // INFO: a reachable address answered with the wrong identity (stale/reused IP,
+                // ghost peer). This is the only signal that separates "unreachable" from
+                // "reached the wrong device", so it must survive at the user's default level.
+                logger.info {
+                    "$appInstanceId fast probe identity mismatch " +
+                        "(${telnetResult.peerAppInstanceId}), skipping ${freshest.hostAddress}"
+                }
+            }
+            logger.debug { "$appInstanceId fast probe failed, falling back to full list" }
+        }
+
+        // Slow path: race the recency-ordered list in parallel with a longer timeout.
+        return telnetHelper
+            .switchHost(ordered, port, appInstanceId, TelnetHelper.SLOW_TIMEOUT)
+            ?.let { (hostInfo, telnetResult) -> Pair(hostInfo, telnetResult.versionRelation) }
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // WebSocket upgrade (opportunistic, non-blocking)
+    // ──────────────────────────────────────────────────────────────
+
+    /**
+     * Attempt to upgrade the connection to WebSocket after HTTP CONNECTED.
+     * This is a best-effort, non-blocking operation:
+     * - If the remote device supports WebSocket, a persistent bidirectional
+     *   channel is established, replacing HTTP heartbeat polling.
+     * - If the remote is an older version without /ws/sync, the attempt
+     *   silently fails and HTTP polling continues as before.
+     */
+    private fun SyncRuntimeInfo.attemptWebSocketUpgrade(
+        host: String,
+        port: Int,
+    ) {
+        if (wsSessionManager.isConnected(appInstanceId)) return
+
+        if (!WsConnectionPolicy.shouldInitiate(
+                localAppInstanceId = appInfo.appInstanceId,
+                localPlatform = localPlatform,
+                remoteAppInstanceId = appInstanceId,
+                remotePlatform = platform,
+            )
+        ) {
+            logger.debug { "WebSocket: not initiator for $appInstanceId, waiting for inbound" }
+            return
+        }
+
+        logger.info { "Attempting WebSocket upgrade to $appInstanceId at $host:$port" }
+        wsClientConnector.connectAsync(host, port, appInstanceId)
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Low-level operations (heartbeat, trust, token cache)
+    // ──────────────────────────────────────────────────────────────
+
+    private suspend fun heartbeat(
+        host: String,
+        port: Int,
+        targetAppInstanceId: String,
+        callback: ResolveCallback,
+    ): Int {
+        val hostAndPort = HostAndPort(host, port)
+
+        // Piggyback our current return address onto the heartbeat (#4509). Advertise only the
+        // local interface(s) on the peer's subnet — the address it can actually route to — and
+        // only when it differs from what we last delivered, so a steady connection tells each
+        // peer exactly once and then sends plain GET heartbeats.
+        val advertiseHostInfo = subnetMatchedHostInfo(host)
+        val advertiseSyncInfo =
+            if (advertiseHostInfo.isNotEmpty() && lastHeartbeatAdvertised[targetAppInstanceId] != advertiseHostInfo) {
+                syncInfoFactory.createSyncInfo(advertiseHostInfo)
+            } else {
+                null
+            }
+
+        val result =
+            syncClientApi.heartbeat(
+                syncInfo = advertiseSyncInfo,
+                targetAppInstanceId = targetAppInstanceId,
+            ) {
+                buildUrl(hostAndPort)
+            }
+
+        if (result is SuccessResult) {
+            // Mark delivered only on success, so a failed heartbeat re-advertises next time.
+            advertiseSyncInfo?.let { lastHeartbeatAdvertised[targetAppInstanceId] = advertiseHostInfo }
+        } else {
+            // Forget on any failure so the next successful heartbeat (e.g. after a reconnect)
+            // re-advertises our address to the peer.
+            lastHeartbeatAdvertised.remove(targetAppInstanceId)
+        }
+
+        return when (result) {
+            is SuccessResult -> {
+                val versionRelation: VersionRelation? = result.getResult()
+                versionRelation?.let {
+                    callback.updateVersionRelation(versionRelation)
+                    if (versionRelation == VersionRelation.EQUAL_TO) {
+                        SyncState.CONNECTED
+                    } else {
+                        SyncState.INCOMPATIBLE
+                    }
+                } ?: run {
+                    logger.info { "heartbeat success but versionRelation is null $host $port" }
+                    SyncState.DISCONNECTED
+                }
+            }
+
+            is FailureResult -> {
+                when (val failErrorCode = result.exception.getErrorCode().code) {
+                    StandardErrorCode.NOT_MATCH_APP_INSTANCE_ID.getCode() -> {
+                        logger.info { "heartbeat return fail state to disconnect $host $port" }
+                        SyncState.DISCONNECTED
+                    }
+                    StandardErrorCode.DECRYPT_FAIL.getCode() -> {
+                        logger.info { "heartbeat decrypt fail, state to unmatched $host $port $failErrorCode" }
+                        SyncState.UNMATCHED
+                    }
+                    else -> {
+                        logger.info { "heartbeat fail, errorCode: $failErrorCode $host $port" }
+                        SyncState.DISCONNECTED
+                    }
+                }
+            }
+
+            is EncryptFail -> {
+                logger.info { "heartbeat encrypt fail $host $port" }
+                SyncState.UNMATCHED
+            }
+            is DecryptFail -> {
+                logger.info { "heartbeat decrypt fail $host $port" }
+                SyncState.UNMATCHED
+            }
+
+            else -> {
+                logger.info { "heartbeat connect fail, state to disconnected $host $port" }
+                SyncState.DISCONNECTED
+            }
+        }
+    }
+
+    private suspend fun SyncRuntimeInfo.trustByTokenCache(): Boolean {
+        tokenCache.getToken(appInstanceId)?.let { token ->
+            connectHostAddress?.let { host ->
+                val hostAndPort = HostAndPort(host, port)
+                val result =
+                    syncClientApi.trust(appInstanceId, host, token.value) {
+                        buildUrl(hostAndPort)
+                    }
+
+                if (result is SuccessResult) {
+                    advertiseAddressViaHeartbeat(host, port, appInstanceId)
+                    return@trustByTokenCache true
+                }
+            }
+        }
+        return false
+    }
+
+    // Bearer path (POST /sync/trust): the token is the random value the remote also holds
+    // while its QR / pairing code is on screen. Works for any pairingVersion — a v2 remote
+    // still serves /sync/trust and verifies via `sameToken`. This is the QR path; it must
+    // never be diverted into the SAS comparison.
+    private suspend fun SyncRuntimeInfo.trustByBearerToken(
+        token: QrBearerToken,
+        callback: (Boolean) -> Unit,
+    ) {
+        if (connectState != SyncState.UNVERIFIED) {
+            callback(false)
+            return
+        }
+        connectHostAddress?.let { host ->
+            val hostAndPort = HostAndPort(host, port)
+            val result =
+                syncClientApi.trust(appInstanceId, host, token.value) {
+                    buildUrl(hostAndPort)
+                }
+
+            if (result is SuccessResult) {
+                advertiseAddressViaHeartbeat(host, port, appInstanceId)
+                syncRuntimeInfoDao.updateConnectInfo(
+                    this.copy(
+                        connectState = SyncState.CONNECTED,
+                        modifyTime = nowEpochMilliseconds(),
+                    ),
+                )
+                callback(true)
+                ratingPromptManager.trackSignificantAction()
+                attemptWebSocketUpgrade(host, port)
+            } else {
+                callback(false)
+            }
+        } ?: callback(false)
+    }
+
+    // SAS path (POST /sync/trust/v2/*): the code is the key-derived value the user compares
+    // across both screens. Only reachable for pairingVersion>=2 peers, and only via a
+    // user-entered SasCode — never a machine-read QR bearer token.
+    private suspend fun SyncRuntimeInfo.trustBySasCode(
+        code: SasCode,
+        callback: (Boolean) -> Unit,
+    ) {
+        if (connectState != SyncState.UNVERIFIED) {
+            callback(false)
+            return
+        }
+        connectHostAddress?.let { host ->
+            val hostAndPort = HostAndPort(host, port)
+
+            // Step 1: Exchange keys. This exchange supersedes the dialog's
+            // warm-up on the responder; record its generation BEFORE sending so
+            // an abandon after a SAS mismatch or a lost response can still
+            // cancel the exchange that actually exists over there (#4684).
+            val generation = pendingExchangeLedger.nextGeneration()
+            pendingExchangeLedger.record(appInstanceId, generation)
+            val exchangeResult =
+                syncClientApi.exchangeKeys(appInstanceId, generation) {
+                    buildUrl(hostAndPort)
+                }
+
+            if (exchangeResult !is SuccessResult) {
+                logger.warn { "v2 key exchange failed for $appInstanceId" }
+                callback(false)
+                return
+            }
+
+            val response: KeyExchangeResponse? = exchangeResult.getResult()
+            if (response == null) {
+                logger.warn { "v2 key exchange response verification failed for $appInstanceId" }
+                callback(false)
+                return
+            }
+
+            // Step 2: Compute local SAS and compare with user-entered token
+            val localCryptPublicKey =
+                secureStore.secureKeyPair.getCryptPublicKeyBytes(secureKeyPairSerializer)
+            val localSAS =
+                CryptographyUtils.computeSAS(localCryptPublicKey, response.cryptPublicKey)
+
+            if (code.value != localSAS) {
+                logger.warn {
+                    "v2 SAS mismatch for $appInstanceId (possible MITM)"
+                }
+                callback(false)
+                return
+            }
+
+            // Step 3: Confirm trust
+            val confirmResult =
+                syncClientApi.trustV2Confirm(appInstanceId, host) {
+                    buildUrl(hostAndPort)
+                }
+
+            if (confirmResult !is SuccessResult) {
+                logger.warn { "v2 trust confirm failed for $appInstanceId" }
+                callback(false)
+                return
+            }
+
+            // Step 4: Save remote key locally and send heartbeat. The confirm
+            // consumed the responder's pending exchange — nothing left to cancel.
+            pendingExchangeLedger.consume(appInstanceId, generation)
+            secureStore.saveCryptPublicKey(appInstanceId, response.cryptPublicKey)
+
+            advertiseAddressViaHeartbeat(host, port, appInstanceId)
+            syncRuntimeInfoDao.updateConnectInfo(
+                this.copy(
+                    connectState = SyncState.CONNECTED,
+                    modifyTime = nowEpochMilliseconds(),
+                ),
+            )
+            callback(true)
+            ratingPromptManager.trackSignificantAction()
+            attemptWebSocketUpgrade(host, port)
+        } ?: callback(false)
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // Helpers
+    // ──────────────────────────────────────────────────────────────
+
+    private suspend fun SyncRuntimeInfo.updateConnectState(
+        state: Int,
+        hostAddress: String? = connectHostAddress,
+        networkPrefixLength: Short? = connectNetworkPrefixLength,
+    ): Int {
+        syncRuntimeInfoDao.updateConnectInfo(
+            this.copy(
+                connectHostAddress = hostAddress,
+                connectNetworkPrefixLength = networkPrefixLength,
+                connectState = state,
+                modifyTime = nowEpochMilliseconds(),
+            ),
+        )
+        return state
+    }
+
+    private fun refreshSyncInfo(
+        appInstanceId: String,
+        hostInfoList: List<HostInfo>,
+    ) {
+        lazyPasteBonjourService.value.refreshTarget(appInstanceId, hostInfoList)
+    }
+
+    /**
+     * Our local interface address(es) on [host]'s subnet — the address the peer at [host] can
+     * actually route back to. Reuses [HostInfo.filter], the same subnet match the discovery and
+     * trust flows use. Empty when no local interface shares the peer's subnet (cross-subnet /
+     * offline), in which case we advertise nothing and leave reachability to the next mDNS round.
+     */
+    private fun subnetMatchedHostInfo(host: String): List<HostInfo> =
+        networkInterfaceService
+            .getCurrentUseNetworkInterfaces()
+            .map { it.toHostInfo() }
+            .filter { it.filter(host) }
+
+    /**
+     * Heartbeat that always carries our subnet-matched address — used by the trust handshakes,
+     * where the peer must receive our [SyncInfo] to finish pairing. Records what we advertised
+     * (on success) into [lastHeartbeatAdvertised] so the subsequent steady-state liveness
+     * heartbeat doesn't redundantly re-send the same address right after a fresh pairing.
+     */
+    private suspend fun advertiseAddressViaHeartbeat(
+        host: String,
+        port: Int,
+        appInstanceId: String,
+    ) {
+        val advertiseHostInfo = subnetMatchedHostInfo(host)
+        val result =
+            syncClientApi.heartbeat(
+                syncInfo = syncInfoFactory.createSyncInfo(advertiseHostInfo),
+                targetAppInstanceId = appInstanceId,
+            ) {
+                buildUrl(HostAndPort(host, port))
+            }
+        if (result is SuccessResult) {
+            lastHeartbeatAdvertised[appInstanceId] = advertiseHostInfo
+        }
+    }
+}

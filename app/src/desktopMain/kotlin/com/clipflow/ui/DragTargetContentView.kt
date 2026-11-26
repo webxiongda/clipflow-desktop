@@ -1,0 +1,281 @@
+package com.clipflow.ui
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.draganddrop.dragAndDropTarget
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draganddrop.DragAndDropEvent
+import androidx.compose.ui.draganddrop.DragAndDropTarget
+import androidx.compose.ui.draganddrop.awtTransferable
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.style.TextAlign
+import androidx.navigation.compose.currentBackStackEntryAsState
+import com.clipflow.app.DesktopAppFileChooser
+import com.clipflow.app.DesktopAppWindowManager
+import com.clipflow.i18n.GlobalCopywriter
+import com.clipflow.paste.DesktopReadTransferable
+import com.clipflow.paste.PasteImportSelection
+import com.clipflow.paste.PasteSourceContext
+import com.clipflow.paste.PrefetchedTransferable
+import com.clipflow.paste.TransferableConsumer
+import com.clipflow.ui.theme.AppUISize.enormous
+import com.clipflow.ui.theme.AppUISize.medium
+import com.clipflow.ui.theme.AppUISize.tiny
+import com.clipflow.ui.theme.AppUISize.tiny4X
+import com.clipflow.ui.theme.AppUISize.xLarge
+import com.clipflow.ui.theme.AppUISize.xLargeRoundedCornerShape
+import com.clipflow.ui.theme.AppUISize.xxLarge
+import com.clipflow.utils.GlobalCoroutineScope
+import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.rounded.Content_paste
+import com.composables.icons.materialsymbols.rounded.Upload_file
+import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.launch
+import okio.Path
+import okio.Path.Companion.toOkioPath
+import org.koin.compose.koinInject
+import java.awt.Image
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.Transferable
+import java.io.File
+import java.io.InputStream
+import java.net.URL
+
+private val logger = KotlinLogging.logger {}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+fun DragTargetContentView() {
+    val appWindowManager = koinInject<DesktopAppWindowManager>()
+    val copywriter = koinInject<GlobalCopywriter>()
+    val pasteConsumer = koinInject<TransferableConsumer>()
+    val pasteImportSelection = koinInject<PasteImportSelection>()
+    val navController = LocalNavHostController.current
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    // On the Import page a dropped export file is offered to the page instead of
+    // being added to the clipboard.
+    val onImportPage = backStackEntry?.let { getRouteName(it.destination) } == Import.NAME
+    val onImportPageState = rememberUpdatedState(onImportPage)
+    var isDragging by remember { mutableStateOf(false) }
+    val animatedAlpha by animateFloatAsState(
+        targetValue = if (isDragging) 0.85f else 0f,
+        animationSpec = tween(300),
+        label = "drag_target_alpha",
+    )
+
+    val dragAndDropTarget =
+        remember {
+            object : DragAndDropTarget {
+                override fun onStarted(event: DragAndDropEvent) {
+                    isDragging = true
+                }
+
+                override fun onEnded(event: DragAndDropEvent) {
+                    isDragging = false
+                }
+
+                override fun onDrop(event: DragAndDropEvent): Boolean {
+                    val transferable = event.awtTransferable
+                    if (onImportPageState.value) {
+                        singleDroppedFile(transferable)?.let { path ->
+                            pasteImportSelection.select(path)
+                            return true
+                        }
+                    }
+                    val source: String? = appWindowManager.getCurrentActiveAppName()
+                    // Drop data is only readable during this callback: copy what the plugins
+                    // read, then collect off the UI thread (file copies, image encoding and the
+                    // database write would otherwise freeze the window after the drop).
+                    val prefetched =
+                        runCatching {
+                            PrefetchedTransferable.of(transferable) { flavor ->
+                                pasteConsumer.getPlugin(flavor.humanPresentableName) != null &&
+                                    flavor.representationClass?.let { rep ->
+                                        DROP_READ_CLASSES.any { it.isAssignableFrom(rep) }
+                                    } == true
+                            }
+                        }.getOrElse { e ->
+                            logger.error(e) { "Failed to prefetch dropped transferable" }
+                            return false
+                        }
+                    GlobalCoroutineScope.ioCoroutineDispatcher.launch {
+                        pasteConsumer.consume(
+                            DesktopReadTransferable(prefetched),
+                            PasteSourceContext(
+                                source = source,
+                                remote = false,
+                                dragAndDrop = true,
+                            ),
+                        )
+                    }
+                    return true
+                }
+            }
+        }
+
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .dragAndDropTarget(
+                    shouldStartDragAndDrop = { true },
+                    target = dragAndDropTarget,
+                ),
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        MaterialTheme.colorScheme.surface.copy(alpha = animatedAlpha),
+                    ),
+        )
+
+        AnimatedVisibility(
+            visible = isDragging,
+            enter =
+                fadeIn(animationSpec = tween(250)) +
+                    scaleIn(
+                        initialScale = 0.92f,
+                        animationSpec = tween(250),
+                    ),
+            exit =
+                fadeOut(animationSpec = tween(200)) +
+                    scaleOut(
+                        targetScale = 0.92f,
+                        animationSpec = tween(200),
+                    ),
+            modifier = Modifier.align(Alignment.Center),
+        ) {
+            val borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+            Surface(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                        .padding(horizontal = xLarge)
+                        .drawWithContent {
+                            drawContent()
+                            val strokeWidth = tiny4X.toPx()
+                            val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f)
+                            val halfStroke = strokeWidth / 2
+                            drawRoundRect(
+                                color = borderColor,
+                                topLeft = Offset(halfStroke, halfStroke),
+                                size =
+                                    Size(
+                                        width = size.width - strokeWidth,
+                                        height = size.height - strokeWidth,
+                                    ),
+                                style =
+                                    Stroke(
+                                        width = strokeWidth,
+                                        pathEffect = dashEffect,
+                                    ),
+                                cornerRadius = CornerRadius(xLarge.toPx()),
+                            )
+                        },
+                shape = xLargeRoundedCornerShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = xxLarge, horizontal = medium),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Surface(
+                        modifier = Modifier.size(enormous),
+                        shape = RoundedCornerShape(xxLarge),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Icon(
+                            imageVector =
+                                if (onImportPage) {
+                                    MaterialSymbols.Rounded.Upload_file
+                                } else {
+                                    MaterialSymbols.Rounded.Content_paste
+                                },
+                            contentDescription = null,
+                            modifier = Modifier.padding(medium),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(medium))
+
+                    Text(
+                        text = copywriter.getText(if (onImportPage) "drop_to_import" else "drop_to_clipboard_and_sync"),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                    )
+
+                    Spacer(modifier = Modifier.height(tiny))
+
+                    Text(
+                        text = copywriter.getText(if (onImportPage) "drop_import_hint" else "drop_hint"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The representation classes the paste type plugins consume. Each text flavor comes in
+ * many other representations too (Reader, CharBuffer, byte[], ...); the plugins ignore
+ * those, so reading them on drop would only copy the same content over and over.
+ */
+private val DROP_READ_CLASSES =
+    listOf(String::class.java, InputStream::class.java, URL::class.java, List::class.java, Image::class.java)
+
+/** The one regular .data archive file in [transferable], or null when it carries anything else. */
+private fun singleDroppedFile(transferable: Transferable): Path? =
+    runCatching {
+        if (!transferable.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) return null
+        val files = transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<*> ?: return null
+        (files.singleOrNull() as? File)
+            ?.takeIf { file ->
+                file.isFile && file.extension.equals(DesktopAppFileChooser.IMPORT_FILE_EXTENSION, ignoreCase = true)
+            }?.toOkioPath(true)
+    }.getOrNull()

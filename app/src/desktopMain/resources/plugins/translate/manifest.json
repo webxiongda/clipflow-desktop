@@ -1,5 +1,5 @@
 {
-  "id": "com.crosspaste.sample.translate",
+  "id": "com.clipflow.sample.translate",
   "version": "1.0.0",
   "minAppVersion": "2.2.0",
   "name": { "en": "Translate", "zh": "翻译", "zh_hant": "翻譯", "ja": "翻訳", "ko": "번역", "de": "Übersetzen", "es": "Traducir", "fr": "Traduire", "pt": "Traduzir", "fa": "ترجمه" },

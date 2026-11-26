@@ -1,6 +1,6 @@
 /**
  * Device sync states, numerically aligned with the desktop
- * `com.crosspaste.db.sync.SyncState` constants. Do NOT reorder.
+ * `com.clipflow.db.sync.SyncState` constants. Do NOT reorder.
  */
 export enum SyncState {
   CONNECTED = 0,

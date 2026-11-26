@@ -1,0 +1,14 @@
+package com.clipflow.app
+
+interface AppUrls {
+
+    val homeUrl: String
+
+    val changeLogUrl: String
+
+    val checkMetadataUrl: String
+
+    val issueTrackerUrl: String
+
+    val supportEmail: String
+}

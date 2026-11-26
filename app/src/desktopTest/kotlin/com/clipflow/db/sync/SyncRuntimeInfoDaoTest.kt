@@ -1,0 +1,398 @@
+package com.clipflow.db.sync
+
+import app.cash.turbine.test
+import app.cash.turbine.turbineScope
+import com.clipflow.app.AppInfo
+import com.clipflow.db.TestDriverFactory
+import com.clipflow.db.createDatabase
+import com.clipflow.db.sync.SyncRuntimeInfo.Companion.createSyncRuntimeInfo
+import com.clipflow.dto.sync.EndpointInfo
+import com.clipflow.dto.sync.SyncInfo
+import com.clipflow.platform.Platform
+import kotlinx.coroutines.test.runTest
+import kotlin.collections.listOf
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+
+class SyncRuntimeInfoDaoTest {
+
+    private val testPlatform =
+        Platform(
+            name = "TestOS",
+            arch = "x64",
+            bitMode = 64,
+            version = "1.0",
+        )
+
+    private val testSyncInfo =
+        SyncInfo(
+            appInfo =
+                AppInfo(
+                    appInstanceId = "test-instance-1",
+                    appVersion = "1.0.0",
+                    appRevision = "12345",
+                    userName = "testUser",
+                ),
+            endpointInfo =
+                EndpointInfo(
+                    deviceId = "device-123",
+                    deviceName = "TestDevice",
+                    platform = testPlatform,
+                    hostInfoList = listOf(HostInfo(32, "192.168.1.100")),
+                    port = 8080,
+                ),
+        )
+
+    private val testSyncRuntimeInfo = createSyncRuntimeInfo(testSyncInfo)
+
+    private val updatedSyncRuntimeInfo =
+        testSyncRuntimeInfo.copy(
+            connectState = 1,
+        )
+
+    private val database = createDatabase(TestDriverFactory())
+
+    private val syncRuntimeInfoDao = SqlSyncRuntimeInfoDao(database)
+
+    @Test
+    fun `getAllSyncRuntimeInfosFlow reacts to update function`() =
+        runTest {
+            // Pre-insert test data
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo)
+
+            // Collect the Flow and verify the initial state
+            syncRuntimeInfoDao.getAllSyncRuntimeInfosFlow().test {
+                // Verify initial value
+                val initialList = awaitItem()
+                assertEquals(1, initialList.size)
+                assertEquals(testSyncRuntimeInfo.appInstanceId, initialList[0].appInstanceId)
+                assertEquals(testSyncRuntimeInfo.connectState, initialList[0].connectState)
+
+                // Update the data using the update function
+                syncRuntimeInfoDao.updateConnectInfo(updatedSyncRuntimeInfo)
+
+                // Verify the Flow emits the updated value
+                val updatedList = awaitItem()
+                assertEquals(1, updatedList.size)
+                assertEquals(updatedSyncRuntimeInfo.appInstanceId, updatedList[0].appInstanceId)
+                assertEquals(updatedSyncRuntimeInfo.connectState, updatedList[0].connectState)
+
+                // Verify no further emissions
+                expectNoEvents()
+
+                // Cancel the test
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `getAllSyncRuntimeInfosFlow reacts to insertOrUpdateSyncInfo`() =
+        runTest {
+            // Collect the Flow and verify updates
+            syncRuntimeInfoDao.getAllSyncRuntimeInfosFlow().test {
+                // Initially should be an empty list
+                val emptyList = awaitItem()
+                assertTrue(emptyList.isEmpty())
+
+                // Insert new data
+                syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo)
+
+                // Verify the Flow emits a list containing the new data
+                val insertedList = awaitItem()
+                assertEquals(1, insertedList.size)
+                assertEquals(testSyncRuntimeInfo.appInstanceId, insertedList[0].appInstanceId)
+
+                // Re-insert identical data — should NOT trigger emission (no actual change)
+                syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo)
+                expectNoEvents()
+
+                // Update with changed data — should trigger emission
+                val changedSyncInfo =
+                    SyncInfo(
+                        appInfo =
+                            AppInfo(
+                                appInstanceId = "test-instance-1",
+                                appVersion = "2.0.0",
+                                appRevision = "12345",
+                                userName = "testUser",
+                            ),
+                        endpointInfo = testSyncInfo.endpointInfo,
+                    )
+                syncRuntimeInfoDao.insertOrUpdateSyncInfo(changedSyncInfo)
+
+                val updatedList = awaitItem()
+                assertEquals(1, updatedList.size)
+                assertEquals("2.0.0", updatedList[0].appVersion)
+
+                // Verify no further emissions
+                expectNoEvents()
+
+                // Cancel the test
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `two concurrent collectors both receive every change`() =
+        runTest {
+            // Broadcast semantics (R2-02-005): notifications must not be split between
+            // collectors — each collector observes every insert, update, and delete.
+            turbineScope {
+                val first = syncRuntimeInfoDao.getAllSyncRuntimeInfosFlow().testIn(backgroundScope)
+                val second = syncRuntimeInfoDao.getAllSyncRuntimeInfosFlow().testIn(backgroundScope)
+
+                assertTrue(first.awaitItem().isEmpty())
+                assertTrue(second.awaitItem().isEmpty())
+
+                syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo)
+                assertEquals(1, first.awaitItem().size)
+                assertEquals(1, second.awaitItem().size)
+
+                syncRuntimeInfoDao.updateConnectInfo(updatedSyncRuntimeInfo)
+                assertEquals(updatedSyncRuntimeInfo.connectState, first.awaitItem()[0].connectState)
+                assertEquals(updatedSyncRuntimeInfo.connectState, second.awaitItem()[0].connectState)
+
+                syncRuntimeInfoDao.deleteSyncRuntimeInfo(testSyncRuntimeInfo.appInstanceId)
+                assertTrue(first.awaitItem().isEmpty())
+                assertTrue(second.awaitItem().isEmpty())
+            }
+        }
+
+    @Test
+    fun `late subscriber receives full current snapshot`() =
+        runTest {
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo)
+
+            syncRuntimeInfoDao.getAllSyncRuntimeInfosFlow().test {
+                assertEquals(1, awaitItem().size)
+
+                // A collector subscribing after all changes were consumed by an earlier
+                // collector must still get the full current snapshot, not an empty view.
+                syncRuntimeInfoDao.getAllSyncRuntimeInfosFlow().test {
+                    val snapshot = awaitItem()
+                    assertEquals(1, snapshot.size)
+                    assertEquals(testSyncRuntimeInfo.appInstanceId, snapshot[0].appInstanceId)
+                    cancelAndIgnoreRemainingEvents()
+                }
+
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `insertOrUpdateSyncInfo caps stored hostInfoList at MAX_RECENT_HOST_INFO`() =
+        runTest {
+            val manyHosts = (1..(HostInfo.MAX_RECENT_HOST_INFO + 4)).map { HostInfo(24, "10.0.0.$it") }
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(
+                testSyncInfo.copy(
+                    endpointInfo = testSyncInfo.endpointInfo.copy(hostInfoList = manyHosts),
+                ),
+            )
+
+            val stored = syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")
+            assertNotNull(stored)
+            assertEquals(HostInfo.MAX_RECENT_HOST_INFO, stored.hostInfoList.size)
+        }
+
+    @Test
+    fun `insertOrUpdateSyncInfo re-advertising same address set does not write`() =
+        runTest {
+            // "restamp doesn't churn": re-advertising the same (address, prefix) set (even
+            // with a different incoming lastSeen) must not produce a DB write, because
+            // hostInfoListEqual ignores lastSeen. Verified via modifyTime stability.
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo) // hostInfoList = [.100]
+            val before = syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")
+            assertNotNull(before)
+
+            val reAdvertised =
+                testSyncInfo.copy(
+                    endpointInfo =
+                        testSyncInfo.endpointInfo.copy(
+                            // same address, deliberately different lastSeen on the wire
+                            hostInfoList = listOf(HostInfo(32, "192.168.1.100", lastSeen = 999_999L)),
+                        ),
+                )
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(reAdvertised)
+
+            val after = syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")
+            assertNotNull(after)
+            assertEquals(before.modifyTime, after.modifyTime)
+        }
+
+    @Test
+    fun `insertOrUpdateSyncInfo same address with changed prefix must write`() =
+        runTest {
+            // The prefix feeds address selection and same-subnet checks; after a network
+            // change the same IP can come back under a different prefix, and that new
+            // prefix must reach the database (R2-02-007).
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo) // (32, 192.168.1.100)
+
+            val rePrefixed =
+                testSyncInfo.copy(
+                    endpointInfo =
+                        testSyncInfo.endpointInfo.copy(
+                            hostInfoList = listOf(HostInfo(24, "192.168.1.100")),
+                        ),
+                )
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(rePrefixed)
+
+            val after = syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")
+            assertNotNull(after)
+            val stored = after.hostInfoList.single { it.hostAddress == "192.168.1.100" }
+            assertEquals(24.toShort(), stored.networkPrefixLength)
+        }
+
+    @Test
+    fun `insertOrUpdateSyncInfo LRU-evicts connectHostAddress from list but preserves the column`() =
+        runTest {
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo)
+            val connected =
+                syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")!!.copy(
+                    connectState = SyncState.CONNECTED,
+                    connectHostAddress = "192.168.1.100", // == testSyncInfo's only address
+                    connectNetworkPrefixLength = 32,
+                )
+            syncRuntimeInfoDao.updateConnectInfo(connected)
+
+            // The peer advertises MAX newer addresses, none of which is .100.
+            val newer = (1..HostInfo.MAX_RECENT_HOST_INFO).map { HostInfo(24, "10.0.0.$it") }
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(
+                testSyncInfo.copy(endpointInfo = testSyncInfo.endpointInfo.copy(hostInfoList = newer)),
+            )
+
+            val after = syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")
+            assertNotNull(after)
+            // .100 was LRU-evicted from the host list...
+            assertEquals(HostInfo.MAX_RECENT_HOST_INFO, after.hostInfoList.size)
+            assertTrue(after.hostInfoList.none { it.hostAddress == "192.168.1.100" })
+            // ...but the connect address column (and state) are still preserved.
+            assertEquals("192.168.1.100", after.connectHostAddress)
+            assertEquals(SyncState.CONNECTED, after.connectState)
+        }
+
+    @Test
+    fun `insertOrUpdateSyncInfo preserves connect address on mDNS-style update`() =
+        runTest {
+            // Establish a CONNECTED device with a known connect address.
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo)
+            val connected =
+                syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")!!.copy(
+                    connectState = SyncState.CONNECTED,
+                    connectHostAddress = "192.168.1.100",
+                    connectNetworkPrefixLength = 32,
+                )
+            syncRuntimeInfoDao.updateConnectInfo(connected)
+
+            // An mDNS re-advertisement adds a new address and carries no connectInfo.
+            val advertised =
+                testSyncInfo.copy(
+                    endpointInfo =
+                        testSyncInfo.endpointInfo.copy(
+                            hostInfoList = listOf(HostInfo(24, "192.168.1.200")),
+                        ),
+                )
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(advertised)
+
+            val after = syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")
+            assertNotNull(after)
+            // connectState was already preserved via the -1 sentinel; the connect address
+            // must be preserved too (#4499 weakness ①) rather than nulled.
+            assertEquals(SyncState.CONNECTED, after.connectState)
+            assertEquals("192.168.1.100", after.connectHostAddress)
+            assertEquals(32.toShort(), after.connectNetworkPrefixLength)
+            // ...while the newly-advertised address is merged into the host list.
+            assertTrue(after.hostInfoList.any { it.hostAddress == "192.168.1.200" })
+        }
+
+    /**
+     * Writes a device row whose hostInfo column is not valid JSON, bypassing the
+     * DAO (which always writes valid JSON) — simulates on-disk corruption or a
+     * downgrade to a schema the current decoder cannot parse.
+     */
+    private fun insertCorruptedHostInfoRow(appInstanceId: String) {
+        database.syncRuntimeInfoDatabaseQueries.createSyncRuntimeInfo(
+            appInstanceId,
+            "1.0.0",
+            "testUser",
+            "device-corrupt",
+            "CorruptDevice",
+            testPlatform.name,
+            testPlatform.arch,
+            testPlatform.bitMode.toLong(),
+            testPlatform.version,
+            "[{ corrupted json",
+            8080L,
+            null,
+            null,
+            SyncState.DISCONNECTED.toLong(),
+            1L,
+            1L,
+        )
+    }
+
+    @Test
+    fun `corrupted hostInfo row degrades to empty host list instead of killing the flow`() =
+        runTest {
+            // R2-02-009: one undecodable row must not abort the whole device-list
+            // query — every other device must still be delivered to collectors.
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo)
+            insertCorruptedHostInfoRow("corrupt-instance")
+
+            syncRuntimeInfoDao.getAllSyncRuntimeInfosFlow().test {
+                val list = awaitItem()
+                assertEquals(2, list.size)
+
+                val healthy = list.single { it.appInstanceId == "test-instance-1" }
+                assertEquals(listOf("192.168.1.100"), healthy.hostInfoList.map { it.hostAddress })
+
+                val corrupted = list.single { it.appInstanceId == "corrupt-instance" }
+                assertTrue(corrupted.hostInfoList.isEmpty())
+
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun `corrupted hostInfo row recovers when a valid sync info is written`() =
+        runTest {
+            insertCorruptedHostInfoRow("test-instance-1")
+
+            // Single-row reads degrade the same way as the list query…
+            val degraded = syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")
+            assertNotNull(degraded)
+            assertTrue(degraded.hostInfoList.isEmpty())
+
+            // …and the next discovery/sync write restores valid addresses.
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(testSyncInfo)
+            val recovered = syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")
+            assertNotNull(recovered)
+            assertEquals(listOf("192.168.1.100"), recovered.hostInfoList.map { it.hostAddress })
+        }
+
+    @Test
+    fun `insertOrUpdateSyncInfo evicts old ghost addresses as new ones arrive`() =
+        runTest {
+            // #4499 ghost accumulation: a full set of old addresses, then a full set of new
+            // ones. Capacity-LRU must end with only the newly-advertised addresses.
+            val oldHosts = (1..HostInfo.MAX_RECENT_HOST_INFO).map { HostInfo(24, "10.0.0.$it") }
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(
+                testSyncInfo.copy(
+                    endpointInfo = testSyncInfo.endpointInfo.copy(hostInfoList = oldHosts),
+                ),
+            )
+
+            val newHosts = (1..HostInfo.MAX_RECENT_HOST_INFO).map { HostInfo(24, "10.1.1.$it") }
+            syncRuntimeInfoDao.insertOrUpdateSyncInfo(
+                testSyncInfo.copy(
+                    endpointInfo = testSyncInfo.endpointInfo.copy(hostInfoList = newHosts),
+                ),
+            )
+
+            val stored = syncRuntimeInfoDao.getSyncRuntimeInfo("test-instance-1")
+            assertNotNull(stored)
+            assertEquals(HostInfo.MAX_RECENT_HOST_INFO, stored.hostInfoList.size)
+            assertTrue(stored.hostInfoList.all { it.hostAddress.startsWith("10.1.1.") })
+        }
+}

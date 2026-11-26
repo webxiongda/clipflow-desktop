@@ -2,7 +2,7 @@ import { openDB, type IDBPDatabase } from "idb";
 
 const changeListeners = new Map<string, Set<() => void>>();
 
-const DB_NAME = "crosspaste-blobs";
+const DB_NAME = "clipflow-blobs";
 const STORE_NAME = "blobs";
 const DB_VERSION = 1;
 

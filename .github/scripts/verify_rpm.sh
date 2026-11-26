@@ -16,45 +16,45 @@ RPM_VERSION=$(rpm -qp --qf '%{VERSION}' "$RPM_FILE")
 RPM_RELEASE=$(rpm -qp --qf '%{RELEASE}' "$RPM_FILE")
 
 if [ -n "$REPO_DIR" ]; then
-    cat > /etc/yum.repos.d/crosspaste-local.repo <<EOF
-[crosspaste-local]
-name=CrossPaste (local repository under test)
+    cat > /etc/yum.repos.d/clipflow-local.repo <<EOF
+[clipflow-local]
+name=ClipFlow (local repository under test)
 baseurl=file://$REPO_DIR
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
-gpgkey=file://$REPO_DIR/RPM-GPG-KEY-CrossPaste
+gpgkey=file://$REPO_DIR/RPM-GPG-KEY-ClipFlow
 EOF
-    dnf -y install "crosspaste-$RPM_VERSION-$RPM_RELEASE.$RPM_ARCH" desktop-file-utils
+    dnf -y install "clipflow-$RPM_VERSION-$RPM_RELEASE.$RPM_ARCH" desktop-file-utils
 else
     dnf -y install "$RPM_FILE" desktop-file-utils
 fi
 # The package subscribes the system to the production repository, which is
 # not reachable from a release build of a version that is not published yet;
 # keep it out of the remaining dnf transactions.
-dnf() { command dnf --disablerepo=crosspaste "$@"; }
-test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' crosspaste)" = "$RPM_VERSION-$RPM_RELEASE"
-test "$(readlink /usr/bin/crosspaste)" = /usr/lib/crosspaste/lib/app/bin/crosspaste-cli
+dnf() { command dnf --disablerepo=clipflow "$@"; }
+test "$(rpm -q --qf '%{VERSION}-%{RELEASE}' clipflow)" = "$RPM_VERSION-$RPM_RELEASE"
+test "$(readlink /usr/bin/clipflow)" = /usr/lib/clipflow/lib/app/bin/clipflow-cli
 # A fresh install is subscribed to the signed dnf repository.
-grep -Fx 'baseurl=https://oss.crosspaste.com/site/rpm/' /etc/yum.repos.d/crosspaste.repo
-grep -Fx 'gpgcheck=1' /etc/yum.repos.d/crosspaste.repo
-grep -Fx 'repo_gpgcheck=1' /etc/yum.repos.d/crosspaste.repo
-grep -Fx 'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CrossPaste' /etc/yum.repos.d/crosspaste.repo
-rpm -qc crosspaste | grep -Fx /etc/yum.repos.d/crosspaste.repo
-rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-CrossPaste
+grep -Fx 'baseurl=https://oss.clipflow.com/site/rpm/' /etc/yum.repos.d/clipflow.repo
+grep -Fx 'gpgcheck=1' /etc/yum.repos.d/clipflow.repo
+grep -Fx 'repo_gpgcheck=1' /etc/yum.repos.d/clipflow.repo
+grep -Fx 'gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-ClipFlow' /etc/yum.repos.d/clipflow.repo
+rpm -qc clipflow | grep -Fx /etc/yum.repos.d/clipflow.repo
+rpm --import /etc/pki/rpm-gpg/RPM-GPG-KEY-ClipFlow
 rpm -K "$RPM_FILE" | grep -F 'digests signatures OK'
-test -x /usr/lib/crosspaste/bin/start.sh
-test -f /usr/share/metainfo/com.crosspaste.metainfo.xml
-desktop-file-validate /usr/share/applications/com.crosspaste.desktop
-test "$(crosspaste version)" = "CLI version:  $RPM_VERSION.$RPM_RELEASE"
-rpm -V crosspaste
+test -x /usr/lib/clipflow/bin/start.sh
+test -f /usr/share/metainfo/com.clipflow.metainfo.xml
+desktop-file-validate /usr/share/applications/com.clipflow.desktop
+test "$(clipflow version)" = "CLI version:  $RPM_VERSION.$RPM_RELEASE"
+rpm -V clipflow
 
 # These are private runtime libraries, not providers for unrelated applications.
-if rpm -q --provides crosspaste | grep -q '^lib'; then
+if rpm -q --provides clipflow | grep -q '^lib'; then
     echo 'Unexpected private library Provides' >&2
     exit 1
 fi
-if rpm -q --requires crosspaste | grep -Eq '^(libjvm|libjava|libcrypto)[.]so'; then
+if rpm -q --requires clipflow | grep -Eq '^(libjvm|libjava|libcrypto)[.]so'; then
     echo 'Unexpected bundled library Requires' >&2
     exit 1
 fi
@@ -81,11 +81,11 @@ cleanup() {
 trap cleanup EXIT
 sleep 1
 kill -0 "$XVFB_PID"
-dbus-run-session -- /usr/lib/crosspaste/bin/crosspaste > "$TEST_DIR/desktop.log" 2>&1 &
+dbus-run-session -- /usr/lib/clipflow/bin/clipflow > "$TEST_DIR/desktop.log" 2>&1 &
 APP_PID=$!
 ready=false
 for ((attempt = 0; attempt < 60; attempt++)); do
-    if crosspaste --json status > "$TEST_DIR/status.json" 2>/dev/null; then
+    if clipflow --json status > "$TEST_DIR/status.json" 2>/dev/null; then
         ready=true
         break
     fi
@@ -104,11 +104,11 @@ kill "$APP_PID"
 wait "$APP_PID" 2>/dev/null || true
 APP_PID=
 
-dnf -y remove crosspaste
-test ! -e /usr/bin/crosspaste
-test ! -e /etc/yum.repos.d/crosspaste.repo
-test ! -e /etc/pki/rpm-gpg/RPM-GPG-KEY-CrossPaste
-test ! -e /usr/lib/crosspaste
-test ! -e /usr/share/applications/com.crosspaste.desktop
-test ! -e /usr/share/metainfo/com.crosspaste.metainfo.xml
+dnf -y remove clipflow
+test ! -e /usr/bin/clipflow
+test ! -e /etc/yum.repos.d/clipflow.repo
+test ! -e /etc/pki/rpm-gpg/RPM-GPG-KEY-ClipFlow
+test ! -e /usr/lib/clipflow
+test ! -e /usr/share/applications/com.clipflow.desktop
+test ! -e /usr/share/metainfo/com.clipflow.metainfo.xml
 echo "PASS: $RPM_ARCH installation, repository subscription, CLI, desktop startup, package verification and removal"

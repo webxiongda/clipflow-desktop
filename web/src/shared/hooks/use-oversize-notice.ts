@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { NotificationManager } from "@/shared/notification/notification-manager";
-import { openCrossPasteWebInBrowser } from "@/shared/app/ui-support";
-import { CrossPasteWebService } from "@/shared/app/cross-paste-web-service";
+import { openClipFlowWebInBrowser } from "@/shared/app/ui-support";
+import { ClipFlowWebService } from "@/shared/app/clip-flow-web-service";
 import { useI18n } from "@/shared/i18n/use-i18n";
 import {
   drainOversizeNotices,
@@ -22,13 +22,13 @@ export function useOversizeNoticeListener(): void {
   useEffect(() => {
     // Warm the locale path map so the CTA can open the correct localized URL
     // (also gracefully falls back to /en/ if the fetch fails or is slow).
-    void CrossPasteWebService.refresh();
+    void ClipFlowWebService.refresh();
 
     const showNotice = (title: string, message: string) => {
       NotificationManager.warning(title, message, null, {
         label: t("install_desktop_client"),
         onClick: () => {
-          void openCrossPasteWebInBrowser("download");
+          void openClipFlowWebInBrowser("download");
         },
       });
     };

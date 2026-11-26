@@ -5,7 +5,7 @@ import {
 } from "../ws-payload-crypto";
 
 vi.mock("@/shared/core", () => ({
-  CrossPasteHash: {
+  ClipFlowHash: {
     base64Decode: (str: string) =>
       Int8Array.from(atob(str), (c) => c.charCodeAt(0)),
   },

@@ -3,7 +3,7 @@ import type { SyncInfo } from "@/shared/models/sync-info";
 import type { TrustResponse } from "@/shared/models/trust";
 import type { KeyExchangeResponse, TrustConfirmResponse } from "@/shared/models/key-exchange";
 import { KeyStore, toInt8Array, type StoredKeyPair } from "@/shared/storage/key-store";
-import { CrossPasteCrypto, CrossPasteHash } from "@/shared/core";
+import { ClipFlowCrypto, ClipFlowHash } from "@/shared/core";
 
 async function ensureKeys(): Promise<StoredKeyPair> {
   return (await KeyStore.getKeys()) ?? (await KeyStore.generateAndStore());
@@ -70,7 +70,7 @@ export const SyncApi = {
     const keys = await ensureKeys();
 
     // Build signed trust request via core crypto
-    const trustRequestJson = await CrossPasteCrypto.buildTrustRequest(
+    const trustRequestJson = await ClipFlowCrypto.buildTrustRequest(
       toInt8Array(keys.signPrivateKey),
       toInt8Array(keys.signPublicKey),
       toInt8Array(keys.cryptPublicKey),
@@ -78,9 +78,9 @@ export const SyncApi = {
     );
 
     const reqConfig = toRequestConfig(config);
-    const extraHeaders: Record<string, string> = { "crosspaste-host": config.host };
+    const extraHeaders: Record<string, string> = { "clipflow-host": config.host };
     if (clientSyncInfo) {
-      extraHeaders["crosspaste-sync-info"] = syncInfoHeader(clientSyncInfo);
+      extraHeaders["clipflow-sync-info"] = syncInfoHeader(clientSyncInfo);
     }
     const response = await apiPost<TrustResponse>(
       reqConfig,
@@ -107,7 +107,7 @@ export const SyncApi = {
     targetAppInstanceId: string;
   }): Promise<KeyExchangeResponse & { requestTimestamp: number }> {
     const keys = await ensureKeys();
-    const requestJson = await CrossPasteCrypto.buildKeyExchangeRequest(
+    const requestJson = await ClipFlowCrypto.buildKeyExchangeRequest(
       toInt8Array(keys.signPrivateKey),
       toInt8Array(keys.signPublicKey),
       toInt8Array(keys.cryptPublicKey),
@@ -119,7 +119,7 @@ export const SyncApi = {
         "/sync/trust/v2/exchange",
         request,
       );
-      const valid = await CrossPasteCrypto.verifyKeyExchangeResponse(JSON.stringify(response));
+      const valid = await ClipFlowCrypto.verifyKeyExchangeResponse(JSON.stringify(response));
       if (!valid) {
         throw new Error("Key exchange response failed verification");
       }
@@ -139,9 +139,9 @@ export const SyncApi = {
    */
   async computeLocalSAS(serverCryptPublicKeyB64: string): Promise<number> {
     const keys = await ensureKeys();
-    return CrossPasteCrypto.computeSAS(
+    return ClipFlowCrypto.computeSAS(
       toInt8Array(keys.cryptPublicKey),
-      CrossPasteHash.base64Decode(serverCryptPublicKeyB64),
+      ClipFlowHash.base64Decode(serverCryptPublicKeyB64),
     );
   },
 
@@ -149,7 +149,7 @@ export const SyncApi = {
    * v2 SAS pairing, step 2 — POST /sync/trust/v2/confirm.
    * Call only after the user-entered code matched [computeLocalSAS]. The
    * desktop persists our crypt key and registers the SyncInfo carried in the
-   * crosspaste-sync-info header (the extension is not mDNS-discoverable).
+   * clipflow-sync-info header (the extension is not mDNS-discoverable).
    */
   async confirmV2(
     config: {
@@ -162,7 +162,7 @@ export const SyncApi = {
     clientSyncInfo: SyncInfo,
   ): Promise<void> {
     const keys = await ensureKeys();
-    const requestJson = await CrossPasteCrypto.buildTrustConfirmRequest(
+    const requestJson = await ClipFlowCrypto.buildTrustConfirmRequest(
       toInt8Array(keys.signPrivateKey),
     );
     const response = await apiPost<TrustConfirmResponse>(
@@ -170,12 +170,12 @@ export const SyncApi = {
       "/sync/trust/v2/confirm",
       JSON.parse(requestJson),
       {
-        "crosspaste-host": config.host,
-        "crosspaste-sync-info": syncInfoHeader(clientSyncInfo),
+        "clipflow-host": config.host,
+        "clipflow-sync-info": syncInfoHeader(clientSyncInfo),
       },
     );
-    const valid = await CrossPasteCrypto.verifyTrustConfirmResponse(
-      CrossPasteHash.base64Decode(serverSignPublicKeyB64),
+    const valid = await ClipFlowCrypto.verifyTrustConfirmResponse(
+      ClipFlowHash.base64Decode(serverSignPublicKeyB64),
       JSON.stringify(response),
     );
     if (!valid) {
@@ -204,7 +204,7 @@ export const SyncApi = {
     const extraHeaders =
       exchangeGeneration === undefined
         ? undefined
-        : { "crosspaste-exchange-timestamp": String(exchangeGeneration) };
+        : { "clipflow-exchange-timestamp": String(exchangeGeneration) };
     await apiPost<unknown>(toRequestConfig(config), "/sync/trust/v2/cancel", undefined, extraHeaders);
   },
 
@@ -276,8 +276,8 @@ export const SyncApi = {
       "/sync/pairing/v3/commit",
       JSON.parse(commitJson),
       {
-        "crosspaste-host": config.host,
-        "crosspaste-sync-info": syncInfoHeader(clientSyncInfo),
+        "clipflow-host": config.host,
+        "clipflow-sync-info": syncInfoHeader(clientSyncInfo),
       },
     );
     return JSON.stringify(ack);
